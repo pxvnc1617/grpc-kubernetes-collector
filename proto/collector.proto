@@ -1,0 +1,74 @@
+syntax = "proto3";
+
+package collector.v1;
+
+option go_package = "github.com/pxvnc1617/grpc-metric-collector/gen/collector/v1;collectorv1";
+
+import "google/protobuf/timestamp.proto";
+
+// CollectorService 는 수집 에이전트와 수집 서버 사이의 전송 계층을 정의한다.
+//
+// 설계 의도
+//   - 에이전트는 수집 결과를 건건이 보내지 않고 배치로 묶어 스트리밍한다.
+//     (RPC 왕복 비용을 줄이고 처리량을 확보하기 위함)
+//   - 수집 대상은 서버가 결정해 푸시한다. 에이전트를 재배포하지 않고
+//     수집 범위를 바꾸기 위해서다.
+service CollectorService {
+  // Report 는 client streaming 이다.
+  // 에이전트가 메트릭 배치를 연속 전송하고, 서버는 스트림 종료 시 집계 결과를 반환한다.
+  rpc Report(stream MetricBatch) returns (ReportSummary);
+
+  // Subscribe 는 server streaming 이다.
+  // 에이전트가 구독하면 서버가 수집 대상 변경을 푸시한다.
+  rpc Subscribe(SubscribeRequest) returns (stream CollectTarget);
+
+  // Health 는 unary 이다. 에이전트 기동 시 연결 확인에 쓴다.
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+// ── 수집 결과 ────────────────────────────────────────────────
+
+message MetricBatch {
+  string agent_id = 1;                          // 에이전트 식별자
+  string target = 2;                            // 수집 대상 (예: aws/ec2, k8s/pod)
+  repeated Metric metrics = 3;                  // 배치에 담긴 메트릭
+  google.protobuf.Timestamp collected_at = 4;   // 수집 시각
+}
+
+message Metric {
+  string name = 1;                     // 메트릭 이름 (예: cpu_usage_percent)
+  string resource_id = 2;              // 자원 식별자
+  double value = 3;
+  map<string, string> labels = 4;      // 부가 속성 (region, namespace 등)
+}
+
+message ReportSummary {
+  int64 batch_count = 1;    // 수신한 배치 수
+  int64 metric_count = 2;   // 수신한 메트릭 총 개수
+  int64 rejected = 3;       // 검증 실패로 버린 개수
+  int64 elapsed_ms = 4;     // 스트림 처리 소요 시간
+}
+
+// ── 수집 대상 구독 ───────────────────────────────────────────
+
+message SubscribeRequest {
+  string agent_id = 1;
+  repeated string capabilities = 2;   // 이 에이전트가 수집 가능한 대상
+}
+
+message CollectTarget {
+  string target = 1;          // 수집 대상
+  int32 interval_seconds = 2; // 수집 주기
+  bool enabled = 3;           // false 면 수집 중단
+}
+
+// ── 헬스체크 ─────────────────────────────────────────────────
+
+message HealthRequest {
+  string agent_id = 1;
+}
+
+message HealthResponse {
+  bool ok = 1;
+  string server_version = 2;
+}

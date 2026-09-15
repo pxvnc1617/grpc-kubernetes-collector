@@ -1,0 +1,14 @@
+# 저장소에는 항상 LF 로 보관한다.
+# Windows 에서 작업하더라도 Linux CI 의 gofmt 검사가 깨지지 않도록 하기 위함.
+* text=auto eol=lf
+
+*.go      text eol=lf
+*.proto   text eol=lf
+*.mod     text eol=lf
+*.sum     text eol=lf
+*.yml     text eol=lf
+*.md      text eol=lf
+Makefile  text eol=lf
+
+*.exe binary
+*.png binary
