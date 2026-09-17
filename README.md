@@ -1,5 +1,9 @@
 # grpc-metric-collector
 
+[![CI](https://github.com/pxvnc1617/grpc-metric-collector/actions/workflows/ci.yml/badge.svg)](https://github.com/pxvnc1617/grpc-metric-collector/actions/workflows/ci.yml)
+[![Go](https://img.shields.io/badge/Go-1.24-00ADD8?logo=go&logoColor=white)](https://go.dev)
+[![gRPC](https://img.shields.io/badge/gRPC-streaming-244c5a?logo=grpc&logoColor=white)](https://grpc.io)
+
 gRPC 기반 메트릭 수집 파이프라인. 수집 에이전트와 수집 서버 사이의
 전송 계층을 gRPC 스트리밍으로 구현했다.
 
@@ -83,6 +87,16 @@ level=INFO msg="report summary" batches=20 metrics=2000 rejected=0 elapsed_ms=18
 ```bash
 make test           # bufconn 기반. 실제 포트 없이 gRPC 스택을 태운다
 ```
+
+```
+ok  internal/server   coverage: 88.6% of statements
+```
+
+- `TestHealth_RequiresAgentID` — 필수 인자 검증
+- `TestReport_CountsMetrics` — 배치 스트림 집계
+- `TestReport_RejectsInvalidButKeepsStream` — **부분 실패가 스트림을 죽이지 않는지**
+- `TestSubscribe_ReturnsCapabilitiesAsTargets` — 수집 대상 푸시
+- `TestValidate` — 배치 검증 6개 케이스
 
 ### 컨테이너
 
