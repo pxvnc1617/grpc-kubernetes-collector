@@ -1,4 +1,4 @@
-.PHONY: tools proto build test lint web run-server run-agent cluster clean
+.PHONY: tools proto build test lint web run-server run-agent cluster image deploy undeploy logs clean
 
 PROTO_DIR := proto
 MODULE    := github.com/pxvnc1617/grpc-kubernetes-collector
@@ -20,7 +20,7 @@ proto:
 
 ## cluster: 로컬 kind 클러스터 + metrics-server + 샘플 워크로드
 cluster:
-	kind create cluster --name $(CLUSTER) --image kindest/node:v1.29.4
+	kind create cluster --name $(CLUSTER) --config deploy/kind-cluster.yaml
 	kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/download/v0.7.1/components.yaml
 	kubectl patch deployment metrics-server -n kube-system --type=json \
 		-p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
@@ -55,6 +55,28 @@ run-server:
 ## run-agent: 수집 에이전트 (20초 주기)
 run-agent:
 	go run ./cmd/agent
+
+## image: 이미지를 빌드해 kind 노드에 적재
+image:
+	docker build -t grpc-kubernetes-collector:dev .
+	kind load docker-image grpc-kubernetes-collector:dev --name $(CLUSTER)
+
+## deploy: 클러스터에 배포 (수집기가 자기 클러스터를 수집한다)
+deploy: image
+	kubectl apply -f deploy/k8s/
+	kubectl -n collector rollout status deployment/collector-server --timeout=180s
+	kubectl -n collector rollout status deployment/collector-agent  --timeout=180s
+	@echo
+	@echo "대시보드: http://localhost:30080  (extraPortMappings 로 만든 클러스터)"
+	@echo "그 외   : kubectl -n collector port-forward svc/collector-server 8080:8080"
+
+## undeploy: 배포 제거
+undeploy:
+	kubectl delete -f deploy/k8s/ --ignore-not-found
+
+## logs: 에이전트 로그 추적
+logs:
+	kubectl -n collector logs -f deployment/collector-agent
 
 ## clean: 빌드 산출물과 클러스터 제거
 clean:

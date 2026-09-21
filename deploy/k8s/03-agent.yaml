@@ -1,0 +1,69 @@
+# 수집 에이전트 — Deployment 1개.
+#
+# DaemonSet 이 아니다. 이 에이전트는 API 서버를 통해 클러스터 전체를 읽으므로,
+# 노드마다 띄우면 같은 자원을 노드 수만큼 중복 수집한다.
+# 노드의 cgroup 을 직접 읽는 수집기라면 그때는 DaemonSet 이 맞다.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: collector-agent
+  namespace: collector
+  labels:
+    app.kubernetes.io/name: collector-agent
+spec:
+  replicas: 1
+  # 재배포 중 두 에이전트가 동시에 수집하지 않도록 교체 후 기동한다.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: collector-agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: collector-agent
+    spec:
+      serviceAccountName: collector-agent
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: agent
+          image: grpc-kubernetes-collector:dev
+          imagePullPolicy: IfNotPresent
+          command: ["/agent"]
+          # kubeconfig 를 빈 문자열로 주면 in-cluster 설정을 쓴다.
+          # 마운트된 ServiceAccount 토큰으로 인증한다.
+          args:
+            - "-kubeconfig="
+            - "-addr=$(SERVER_ADDR)"
+            - "-agent-id=$(POD_NAME)"
+            - "-cluster=$(CLUSTER_NAME)"
+          env:
+            - name: SERVER_ADDR
+              value: "collector-server.collector.svc.cluster.local:50051"
+            - name: CLUSTER_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: collector-config
+                  key: cluster
+            # 어느 파드가 보낸 배치인지 구분할 수 있게 파드 이름을 식별자로 쓴다.
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          resources:
+            requests:
+              cpu: 20m
+              memory: 48Mi
+            limits:
+              cpu: 300m
+              memory: 192Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]

@@ -22,6 +22,12 @@ CronJob · Job                                  :50051                          
 **실무에서는 수집 결과를 Kafka 로 발행했다.** 메시지 브로커를 거치지 않고 에이전트와
 서버가 직접 통신한다면 전송 계층을 어떻게 설계해야 하는지 확인해 보려고 만들었다.
 
+![수집 현황 대시보드](docs/dashboard.png)
+
+수집 현황 · 자원과 관계 · 파드 리소스 사용량 · 로그를 한 화면에서 본다.
+**관계 해석 66/66** 처럼 미해석이 남으면 바로 보이므로, 수집 대상에서 빠진
+자원 종류를 그 자리에서 알아챌 수 있다.
+
 ---
 
 ## 바로 띄워 보기
@@ -33,6 +39,90 @@ make run-agent    # 20초 주기 수집 (다른 터미널)
 ```
 
 `make run-server` 하나로 수집 서버와 대시보드가 같이 뜬다. 별도 웹 서버가 필요 없다.
+
+### 클러스터에 올려서 돌리기
+
+`make deploy` 하면 수집기가 **자기가 올라간 클러스터를 수집한다.**
+
+```bash
+make cluster    # kind 클러스터 (NodePort 용 포트 매핑 포함)
+make deploy     # 이미지 빌드 → kind 적재 → 배포
+```
+
+```
+collector 네임스페이스
+├ ServiceAccount + ClusterRole + ClusterRoleBinding
+├ ConfigMap            클러스터 식별자
+├ Deployment  server   gRPC :50051 · HTTP :8080
+├ Deployment  agent    in-cluster 인증 (ServiceAccount 토큰)
+├ Service     ClusterIP
+└ Service     NodePort 30080   대시보드
+```
+
+대시보드는 `http://localhost:30080`, 포트 매핑 없이 만든 클러스터라면
+`kubectl -n collector port-forward svc/collector-server 8080:8080`.
+
+---
+
+## 배포에서 내린 판단
+
+### cluster-admin 을 붙이지 않았다
+
+수집기는 읽기만 하므로 필요한 자원과 동사만 골랐다. `watch` 도 지금은 쓰지 않아 뺐다.
+
+```yaml
+- apiGroups: [""]
+  resources: [namespaces, pods, configmaps, secrets, serviceaccounts]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["pods/log"]
+  verbs: ["get"]
+```
+
+다만 **RBAC 은 "Secret 의 메타만 읽기" 같은 구분을 제공하지 않는다.**
+`get` 권한이 곧 값 접근이다. 그래서 수집 코드에서 `Data` 를 담지 않는 것으로
+경계를 지키고, 매니페스트 주석에 그 이유를 남겼다.
+
+### DaemonSet 이 아니라 Deployment 다
+
+이 에이전트는 **API 서버를 통해 클러스터 전체를 읽는다.**
+노드마다 띄우면 같은 자원을 노드 수만큼 중복 수집한다.
+
+노드의 `/sys/fs/cgroup` 을 직접 읽는 수집기라면 그때는 DaemonSet 이 맞다.
+수집 경로가 다르면 배포 형태도 달라야 한다.
+
+### replicas 는 1 이다
+
+저장소가 메모리라 늘리면 에이전트가 붙은 파드에만 데이터가 쌓이고,
+대시보드 값이 요청마다 달라진다. 외부 저장소로 빼기 전에는 늘리면 안 된다.
+
+### 기동 순서 문제를 만나 고쳤다
+
+쿠버네티스에 올리자 에이전트가 **매번 한 번씩 죽고 재시작**했다.
+
+```
+ERROR health check failed
+      dial tcp 10.96.241.150:50051: connect: connection refused
+→ Exit Code 1 → 재시작 → 두 번째에 성공
+```
+
+에이전트가 서버보다 먼저 떠서 health check 에 실패하고 종료한 것이다.
+쿠버네티스가 재시작해 주므로 결과적으로는 돌아가지만, **서버가 재기동될 때마다
+CrashLoopBackOff 로 빠져 복구가 지수적으로 늦어진다.**
+
+즉시 종료 대신 **지수 백오프로 기다리게** 바꿨다.
+
+```
+1s → 2s → 4s → 8s → 16s (상한) … 최대 2분
+```
+
+서버를 지우고 에이전트만 띄워 재현했고, **8번째 시도에 연결 · 재시작 0회**를 확인했다.
+
+```
+{"level":"WARN","msg":"server not ready, retrying","attempt":1,"retry_in":"1s"}
+{"level":"WARN","msg":"server not ready, retrying","attempt":5,"retry_in":"16s"}
+{"level":"INFO","msg":"connected","server_version":"v0.2.0","attempts":8}
+```
 
 ---
 

@@ -1,0 +1,14 @@
+# kind 클러스터 설정.
+#
+# kind 노드는 컨테이너라, NodePort 를 호스트에서 열려면 클러스터를 만들 때
+# 포트를 미리 뚫어 둬야 한다. 만든 뒤에는 바꿀 수 없다.
+# 이 설정 없이 만든 클러스터에서는 kubectl port-forward 를 써야 한다.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.29.4
+    extraPortMappings:
+      - containerPort: 30080   # collector-dashboard NodePort
+        hostPort: 30080
+        protocol: TCP

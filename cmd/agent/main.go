@@ -30,6 +30,7 @@ func main() {
 	kubeconfig := flag.String("kubeconfig", defaultKubeconfig(), "kubeconfig path (empty = in-cluster)")
 	batchSize := flag.Int("batch", 50, "items per batch")
 	once := flag.Bool("once", false, "collect once and exit")
+	connectTimeout := flag.Duration("connect-timeout", 2*time.Minute, "how long to wait for the server on startup")
 	flag.Parse()
 
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
@@ -56,18 +57,19 @@ func main() {
 
 	client := collectorv1.NewCollectorServiceClient(conn)
 
-	// 기동 확인. 서버가 없으면 여기서 끝낸다.
-	healthCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	hr, err := client.Health(healthCtx, &collectorv1.HealthRequest{AgentId: *agentID})
-	cancel()
-	if err != nil {
-		log.Error("health check failed", "err", err)
-		os.Exit(1)
-	}
-	log.Info("connected", "server_version", hr.GetServerVersion())
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// 서버가 아직 안 떴을 수 있으므로 물러나며 재시도한다.
+	//
+	// 처음에는 실패 즉시 종료했는데, 쿠버네티스에 올리자 에이전트가 서버보다
+	// 먼저 떠서 매번 한 번씩 죽고 재시작됐다. 재시작으로 넘어가긴 하지만
+	// 서버가 잠깐 재기동될 때마다 CrashLoopBackOff 로 빠져 복구가 늦어진다.
+	// 기다리는 쪽이 맞다.
+	if err := waitForServer(ctx, log, client, *agentID, *connectTimeout); err != nil {
+		log.Error("server unreachable", "err", err, "waited", connectTimeout.String())
+		os.Exit(1)
+	}
 
 	// 구독은 별도 고루틴으로 돌린다.
 	//
@@ -161,6 +163,47 @@ func collectOnce(
 				"entries", len(entries),
 				"batches", sum.GetBatchCount(), "rejected", sum.GetRejected(),
 				"elapsed_ms", sum.GetElapsedMs())
+		}
+	}
+}
+
+// waitForServer 는 서버가 응답할 때까지 물러나며 재시도한다.
+// 간격은 1초에서 시작해 두 배씩 늘리고 15초에서 멈춘다.
+func waitForServer(
+	ctx context.Context,
+	log *slog.Logger,
+	c collectorv1.CollectorServiceClient,
+	agentID string,
+	limit time.Duration,
+) error {
+	deadline := time.Now().Add(limit)
+	backoff := time.Second
+	var lastErr error
+
+	for attempt := 1; ; attempt++ {
+		callCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		hr, err := c.Health(callCtx, &collectorv1.HealthRequest{AgentId: agentID})
+		cancel()
+
+		if err == nil {
+			log.Info("connected", "server_version", hr.GetServerVersion(), "attempts", attempt)
+			return nil
+		}
+		lastErr = err
+
+		if time.Now().After(deadline) {
+			return lastErr
+		}
+		log.Warn("server not ready, retrying",
+			"attempt", attempt, "retry_in", backoff.String(), "err", err)
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(backoff):
+		}
+		if backoff < 15*time.Second {
+			backoff *= 2
 		}
 	}
 }

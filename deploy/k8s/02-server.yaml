@@ -1,0 +1,83 @@
+# 수집 서버 — gRPC 로 수집 결과를 받고, HTTP 로 조회 API 와 대시보드를 낸다.
+#
+# 저장소가 메모리라 replicas 는 1 이다. 늘리면 에이전트가 붙은 파드에만
+# 데이터가 쌓여 대시보드 값이 요청마다 달라진다.
+# 외부 저장소로 빼기 전에는 늘리면 안 된다.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: collector-server
+  namespace: collector
+  labels:
+    app.kubernetes.io/name: collector-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: collector-server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: collector-server
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532          # distroless nonroot
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: server
+          image: grpc-kubernetes-collector:dev
+          imagePullPolicy: IfNotPresent   # kind load 로 올린 이미지를 쓴다
+          args: ["-grpc=:50051", "-http=:8080", "-web=/web/dist"]
+          ports:
+            - name: grpc
+              containerPort: 50051
+            - name: http
+              containerPort: 8080
+          # readiness 와 liveness 를 나눈다.
+          # readiness 가 실패하면 트래픽만 끊고, liveness 가 실패해야 재시작한다.
+          # 둘을 같은 것으로 두면 일시적 지연에도 파드가 죽는다.
+          readinessProbe:
+            httpGet:
+              path: /api/healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            failureThreshold: 2
+          livenessProbe:
+            httpGet:
+              path: /api/healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 20m
+              memory: 48Mi
+            limits:
+              cpu: 300m
+              memory: 192Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: collector-server
+  namespace: collector
+spec:
+  selector:
+    app.kubernetes.io/name: collector-server
+  ports:
+    - name: grpc
+      port: 50051
+      targetPort: grpc
+    - name: http
+      port: 8080
+      targetPort: http
