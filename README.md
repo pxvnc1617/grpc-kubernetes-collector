@@ -309,13 +309,17 @@ $ curl -s localhost:8080/api/summary | jq '.relations'
 ```
 proto/collector.proto          서비스 정의
 cmd/server                     수집 서버 (gRPC + HTTP + 대시보드 서빙)
-cmd/agent                      수집 에이전트
-internal/collector             client-go 수집 — 메타 · 메트릭 · 로그
+cmd/agent                      수집 에이전트 — Deployment · API 서버 경유
+cmd/node-agent                 노드 수집기 — DaemonSet · cgroup 직접
+internal/collector             client-go 수집 — 메타 · 메트릭 · 로그 · cgroup
 internal/server                gRPC 서비스 구현 + 배치 검증
 internal/store                 메모리 저장소 + 이름→UID 해석
 internal/api                   조회 HTTP/JSON API
+internal/metrics               수집기 자체 지표 (Prometheus)
 web/                           Vue 3 대시보드 (Vite)
+deploy/k8s/                    클러스터 배포 매니페스트
 deploy/sample-workloads.yaml   수집 대상 샘플
+.github/workflows/ci.yml       테스트 · 빌드 · kind E2E
 ```
 
 ---
