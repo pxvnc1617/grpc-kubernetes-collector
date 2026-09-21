@@ -1,0 +1,198 @@
+# 수집 대상 샘플 워크로드
+#
+# 관계 매핑을 검증할 수 있도록 워크로드가 ConfigMap · Secret · ServiceAccount 를
+# 실제로 참조하게 구성했다. 로그 수집 검증을 위해 주기적으로 출력하는 파드도 둔다.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: shop
+  labels:
+    team: commerce
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ops
+  labels:
+    team: platform
+---
+# ── shop 네임스페이스 ────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: shop-config
+  namespace: shop
+data:
+  LOG_LEVEL: "info"
+  FEATURE_CART_V2: "true"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: shop-db-credentials
+  namespace: shop
+type: Opaque
+stringData:
+  DB_USER: shopuser
+  DB_PASSWORD: notarealpassword
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: shop-runner
+  namespace: shop
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: storefront
+  namespace: shop
+  labels:
+    app: storefront
+    tier: frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: storefront
+  template:
+    metadata:
+      labels:
+        app: storefront
+        tier: frontend
+    spec:
+      serviceAccountName: shop-runner
+      containers:
+        - name: app
+          image: busybox:1.36
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              while true; do
+                echo "$(date -Iseconds) level=info msg=\"request served\" path=/products status=200"
+                sleep 5
+              done
+          envFrom:
+            - configMapRef:
+                name: shop-config
+            - secretRef:
+                name: shop-db-credentials
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: checkout
+  namespace: shop
+  labels:
+    app: checkout
+    tier: backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: checkout
+  template:
+    metadata:
+      labels:
+        app: checkout
+        tier: backend
+    spec:
+      containers:
+        - name: app
+          image: busybox:1.36
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              i=0
+              while true; do
+                i=$((i+1))
+                if [ $((i % 7)) -eq 0 ]; then
+                  echo "$(date -Iseconds) level=error msg=\"payment gateway timeout\" order_id=$i"
+                else
+                  echo "$(date -Iseconds) level=info msg=\"order accepted\" order_id=$i"
+                fi
+                sleep 4
+              done
+          envFrom:
+            - secretRef:
+                name: shop-db-credentials
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+---
+# ── ops 네임스페이스 ─────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ops-config
+  namespace: ops
+data:
+  SCRAPE_INTERVAL: "30s"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: log-shipper
+  namespace: ops
+  labels:
+    app: log-shipper
+    tier: platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: log-shipper
+  template:
+    metadata:
+      labels:
+        app: log-shipper
+        tier: platform
+    spec:
+      containers:
+        - name: app
+          image: busybox:1.36
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              while true; do
+                echo "$(date -Iseconds) level=warn msg=\"buffer usage high\" pct=82"
+                sleep 9
+              done
+          envFrom:
+            - configMapRef:
+                name: ops-config
+          resources:
+            requests:
+              cpu: 5m
+              memory: 8Mi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nightly-report
+  namespace: ops
+  labels:
+    app: nightly-report
+spec:
+  schedule: "*/5 * * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: report
+              image: busybox:1.36
+              command: ["/bin/sh", "-c", "echo \"$(date -Iseconds) level=info msg=\\\"report generated\\\"\"; sleep 2"]
+              envFrom:
+                - configMapRef:
+                    name: ops-config

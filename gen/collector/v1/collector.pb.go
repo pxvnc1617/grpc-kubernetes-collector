@@ -22,19 +22,276 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type MetaBatch struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	Cluster       string                 `protobuf:"bytes,2,opt,name=cluster,proto3" json:"cluster,omitempty"` // 수집한 클러스터 식별자
+	Resources     []*ResourceMeta        `protobuf:"bytes,3,rep,name=resources,proto3" json:"resources,omitempty"`
+	CollectedAt   *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=collected_at,json=collectedAt,proto3" json:"collected_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MetaBatch) Reset() {
+	*x = MetaBatch{}
+	mi := &file_collector_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MetaBatch) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MetaBatch) ProtoMessage() {}
+
+func (x *MetaBatch) ProtoReflect() protoreflect.Message {
+	mi := &file_collector_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MetaBatch.ProtoReflect.Descriptor instead.
+func (*MetaBatch) Descriptor() ([]byte, []int) {
+	return file_collector_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *MetaBatch) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
+	}
+	return ""
+}
+
+func (x *MetaBatch) GetCluster() string {
+	if x != nil {
+		return x.Cluster
+	}
+	return ""
+}
+
+func (x *MetaBatch) GetResources() []*ResourceMeta {
+	if x != nil {
+		return x.Resources
+	}
+	return nil
+}
+
+func (x *MetaBatch) GetCollectedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.CollectedAt
+	}
+	return nil
+}
+
+type ResourceMeta struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Uid           string                 `protobuf:"bytes,1,opt,name=uid,proto3" json:"uid,omitempty"`   // 쿠버네티스 UID
+	Kind          string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"` // Pod, Deployment, ConfigMap ...
+	Name          string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
+	Namespace     string                 `protobuf:"bytes,4,opt,name=namespace,proto3" json:"namespace,omitempty"` // 클러스터 스코프 자원은 빈 문자열
+	Labels        map[string]string      `protobuf:"bytes,5,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Status        string                 `protobuf:"bytes,6,opt,name=status,proto3" json:"status,omitempty"` // Running, Available ...
+	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	Relations     []*Relation            `protobuf:"bytes,8,rep,name=relations,proto3" json:"relations,omitempty"`                                                                             // 이 자원이 맺는 관계
+	Attributes    map[string]string      `protobuf:"bytes,9,rep,name=attributes,proto3" json:"attributes,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // 종류별 부가 속성 (replicas, image ...)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ResourceMeta) Reset() {
+	*x = ResourceMeta{}
+	mi := &file_collector_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResourceMeta) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResourceMeta) ProtoMessage() {}
+
+func (x *ResourceMeta) ProtoReflect() protoreflect.Message {
+	mi := &file_collector_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ResourceMeta.ProtoReflect.Descriptor instead.
+func (*ResourceMeta) Descriptor() ([]byte, []int) {
+	return file_collector_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *ResourceMeta) GetUid() string {
+	if x != nil {
+		return x.Uid
+	}
+	return ""
+}
+
+func (x *ResourceMeta) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *ResourceMeta) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *ResourceMeta) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
+	}
+	return ""
+}
+
+func (x *ResourceMeta) GetLabels() map[string]string {
+	if x != nil {
+		return x.Labels
+	}
+	return nil
+}
+
+func (x *ResourceMeta) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *ResourceMeta) GetCreatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.CreatedAt
+	}
+	return nil
+}
+
+func (x *ResourceMeta) GetRelations() []*Relation {
+	if x != nil {
+		return x.Relations
+	}
+	return nil
+}
+
+func (x *ResourceMeta) GetAttributes() map[string]string {
+	if x != nil {
+		return x.Attributes
+	}
+	return nil
+}
+
+// Relation 은 자원 사이의 관계를 표현한다.
+//
+// 쿠버네티스에서 자원 간 참조는 UID 가 아니라 "이름" 으로 적힌다.
+// 워크로드 스펙의 configMapRef / secretRef 에는 이름만 있으므로,
+// 실제 자원과 이으려면 namespace + name 으로 해석해 UID 를 찾아야 한다.
+type Relation struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Type            string                 `protobuf:"bytes,1,opt,name=type,proto3" json:"type,omitempty"` // PARENT_CHILD | DEPENDENCY | ASSOCIATION
+	TargetKind      string                 `protobuf:"bytes,2,opt,name=target_kind,json=targetKind,proto3" json:"target_kind,omitempty"`
+	TargetName      string                 `protobuf:"bytes,3,opt,name=target_name,json=targetName,proto3" json:"target_name,omitempty"`
+	TargetNamespace string                 `protobuf:"bytes,4,opt,name=target_namespace,json=targetNamespace,proto3" json:"target_namespace,omitempty"`
+	TargetUid       string                 `protobuf:"bytes,5,opt,name=target_uid,json=targetUid,proto3" json:"target_uid,omitempty"` // 해석에 성공하면 채워진다. 실패 시 빈 문자열
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *Relation) Reset() {
+	*x = Relation{}
+	mi := &file_collector_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Relation) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Relation) ProtoMessage() {}
+
+func (x *Relation) ProtoReflect() protoreflect.Message {
+	mi := &file_collector_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Relation.ProtoReflect.Descriptor instead.
+func (*Relation) Descriptor() ([]byte, []int) {
+	return file_collector_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *Relation) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+func (x *Relation) GetTargetKind() string {
+	if x != nil {
+		return x.TargetKind
+	}
+	return ""
+}
+
+func (x *Relation) GetTargetName() string {
+	if x != nil {
+		return x.TargetName
+	}
+	return ""
+}
+
+func (x *Relation) GetTargetNamespace() string {
+	if x != nil {
+		return x.TargetNamespace
+	}
+	return ""
+}
+
+func (x *Relation) GetTargetUid() string {
+	if x != nil {
+		return x.TargetUid
+	}
+	return ""
+}
+
 type MetricBatch struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`             // 에이전트 식별자
-	Target        string                 `protobuf:"bytes,2,opt,name=target,proto3" json:"target,omitempty"`                              // 수집 대상 (예: aws/ec2, k8s/pod)
-	Metrics       []*Metric              `protobuf:"bytes,3,rep,name=metrics,proto3" json:"metrics,omitempty"`                            // 배치에 담긴 메트릭
-	CollectedAt   *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=collected_at,json=collectedAt,proto3" json:"collected_at,omitempty"` // 수집 시각
+	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	Cluster       string                 `protobuf:"bytes,2,opt,name=cluster,proto3" json:"cluster,omitempty"`
+	Metrics       []*Metric              `protobuf:"bytes,3,rep,name=metrics,proto3" json:"metrics,omitempty"`
+	CollectedAt   *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=collected_at,json=collectedAt,proto3" json:"collected_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *MetricBatch) Reset() {
 	*x = MetricBatch{}
-	mi := &file_collector_proto_msgTypes[0]
+	mi := &file_collector_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -46,7 +303,7 @@ func (x *MetricBatch) String() string {
 func (*MetricBatch) ProtoMessage() {}
 
 func (x *MetricBatch) ProtoReflect() protoreflect.Message {
-	mi := &file_collector_proto_msgTypes[0]
+	mi := &file_collector_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -59,7 +316,7 @@ func (x *MetricBatch) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MetricBatch.ProtoReflect.Descriptor instead.
 func (*MetricBatch) Descriptor() ([]byte, []int) {
-	return file_collector_proto_rawDescGZIP(), []int{0}
+	return file_collector_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *MetricBatch) GetAgentId() string {
@@ -69,9 +326,9 @@ func (x *MetricBatch) GetAgentId() string {
 	return ""
 }
 
-func (x *MetricBatch) GetTarget() string {
+func (x *MetricBatch) GetCluster() string {
 	if x != nil {
-		return x.Target
+		return x.Cluster
 	}
 	return ""
 }
@@ -92,17 +349,19 @@ func (x *MetricBatch) GetCollectedAt() *timestamppb.Timestamp {
 
 type Metric struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`                               // 메트릭 이름 (예: cpu_usage_percent)
-	ResourceId    string                 `protobuf:"bytes,2,opt,name=resource_id,json=resourceId,proto3" json:"resource_id,omitempty"` // 자원 식별자
-	Value         float64                `protobuf:"fixed64,3,opt,name=value,proto3" json:"value,omitempty"`
-	Labels        map[string]string      `protobuf:"bytes,4,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // 부가 속성 (region, namespace 등)
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`                                  // cpu_usage_millicores, memory_usage_bytes
+	ResourceUid   string                 `protobuf:"bytes,2,opt,name=resource_uid,json=resourceUid,proto3" json:"resource_uid,omitempty"` // 대상 자원 UID
+	ResourceName  string                 `protobuf:"bytes,3,opt,name=resource_name,json=resourceName,proto3" json:"resource_name,omitempty"`
+	Namespace     string                 `protobuf:"bytes,4,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	Value         float64                `protobuf:"fixed64,5,opt,name=value,proto3" json:"value,omitempty"`
+	Labels        map[string]string      `protobuf:"bytes,6,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Metric) Reset() {
 	*x = Metric{}
-	mi := &file_collector_proto_msgTypes[1]
+	mi := &file_collector_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -114,7 +373,7 @@ func (x *Metric) String() string {
 func (*Metric) ProtoMessage() {}
 
 func (x *Metric) ProtoReflect() protoreflect.Message {
-	mi := &file_collector_proto_msgTypes[1]
+	mi := &file_collector_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -127,7 +386,7 @@ func (x *Metric) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Metric.ProtoReflect.Descriptor instead.
 func (*Metric) Descriptor() ([]byte, []int) {
-	return file_collector_proto_rawDescGZIP(), []int{1}
+	return file_collector_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *Metric) GetName() string {
@@ -137,9 +396,23 @@ func (x *Metric) GetName() string {
 	return ""
 }
 
-func (x *Metric) GetResourceId() string {
+func (x *Metric) GetResourceUid() string {
 	if x != nil {
-		return x.ResourceId
+		return x.ResourceUid
+	}
+	return ""
+}
+
+func (x *Metric) GetResourceName() string {
+	if x != nil {
+		return x.ResourceName
+	}
+	return ""
+}
+
+func (x *Metric) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
 	}
 	return ""
 }
@@ -158,19 +431,179 @@ func (x *Metric) GetLabels() map[string]string {
 	return nil
 }
 
+type LogBatch struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	Cluster       string                 `protobuf:"bytes,2,opt,name=cluster,proto3" json:"cluster,omitempty"`
+	Entries       []*LogEntry            `protobuf:"bytes,3,rep,name=entries,proto3" json:"entries,omitempty"`
+	CollectedAt   *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=collected_at,json=collectedAt,proto3" json:"collected_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LogBatch) Reset() {
+	*x = LogBatch{}
+	mi := &file_collector_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LogBatch) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LogBatch) ProtoMessage() {}
+
+func (x *LogBatch) ProtoReflect() protoreflect.Message {
+	mi := &file_collector_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LogBatch.ProtoReflect.Descriptor instead.
+func (*LogBatch) Descriptor() ([]byte, []int) {
+	return file_collector_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *LogBatch) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
+	}
+	return ""
+}
+
+func (x *LogBatch) GetCluster() string {
+	if x != nil {
+		return x.Cluster
+	}
+	return ""
+}
+
+func (x *LogBatch) GetEntries() []*LogEntry {
+	if x != nil {
+		return x.Entries
+	}
+	return nil
+}
+
+func (x *LogBatch) GetCollectedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.CollectedAt
+	}
+	return nil
+}
+
+type LogEntry struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	PodUid        string                 `protobuf:"bytes,1,opt,name=pod_uid,json=podUid,proto3" json:"pod_uid,omitempty"`
+	PodName       string                 `protobuf:"bytes,2,opt,name=pod_name,json=podName,proto3" json:"pod_name,omitempty"`
+	Namespace     string                 `protobuf:"bytes,3,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	Container     string                 `protobuf:"bytes,4,opt,name=container,proto3" json:"container,omitempty"`
+	Message       string                 `protobuf:"bytes,5,opt,name=message,proto3" json:"message,omitempty"`
+	Level         string                 `protobuf:"bytes,6,opt,name=level,proto3" json:"level,omitempty"` // 메시지에서 추출. 실패 시 "unknown"
+	Timestamp     *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LogEntry) Reset() {
+	*x = LogEntry{}
+	mi := &file_collector_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LogEntry) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LogEntry) ProtoMessage() {}
+
+func (x *LogEntry) ProtoReflect() protoreflect.Message {
+	mi := &file_collector_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LogEntry.ProtoReflect.Descriptor instead.
+func (*LogEntry) Descriptor() ([]byte, []int) {
+	return file_collector_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *LogEntry) GetPodUid() string {
+	if x != nil {
+		return x.PodUid
+	}
+	return ""
+}
+
+func (x *LogEntry) GetPodName() string {
+	if x != nil {
+		return x.PodName
+	}
+	return ""
+}
+
+func (x *LogEntry) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
+	}
+	return ""
+}
+
+func (x *LogEntry) GetContainer() string {
+	if x != nil {
+		return x.Container
+	}
+	return ""
+}
+
+func (x *LogEntry) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *LogEntry) GetLevel() string {
+	if x != nil {
+		return x.Level
+	}
+	return ""
+}
+
+func (x *LogEntry) GetTimestamp() *timestamppb.Timestamp {
+	if x != nil {
+		return x.Timestamp
+	}
+	return nil
+}
+
 type ReportSummary struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	BatchCount    int64                  `protobuf:"varint,1,opt,name=batch_count,json=batchCount,proto3" json:"batch_count,omitempty"`    // 수신한 배치 수
-	MetricCount   int64                  `protobuf:"varint,2,opt,name=metric_count,json=metricCount,proto3" json:"metric_count,omitempty"` // 수신한 메트릭 총 개수
-	Rejected      int64                  `protobuf:"varint,3,opt,name=rejected,proto3" json:"rejected,omitempty"`                          // 검증 실패로 버린 개수
-	ElapsedMs     int64                  `protobuf:"varint,4,opt,name=elapsed_ms,json=elapsedMs,proto3" json:"elapsed_ms,omitempty"`       // 스트림 처리 소요 시간
+	BatchCount    int64                  `protobuf:"varint,1,opt,name=batch_count,json=batchCount,proto3" json:"batch_count,omitempty"` // 수신한 배치 수
+	ItemCount     int64                  `protobuf:"varint,2,opt,name=item_count,json=itemCount,proto3" json:"item_count,omitempty"`    // 수신한 항목 총 개수
+	Rejected      int64                  `protobuf:"varint,3,opt,name=rejected,proto3" json:"rejected,omitempty"`                       // 검증 실패로 버린 개수
+	ElapsedMs     int64                  `protobuf:"varint,4,opt,name=elapsed_ms,json=elapsedMs,proto3" json:"elapsed_ms,omitempty"`    // 스트림 처리 소요 시간
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ReportSummary) Reset() {
 	*x = ReportSummary{}
-	mi := &file_collector_proto_msgTypes[2]
+	mi := &file_collector_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -182,7 +615,7 @@ func (x *ReportSummary) String() string {
 func (*ReportSummary) ProtoMessage() {}
 
 func (x *ReportSummary) ProtoReflect() protoreflect.Message {
-	mi := &file_collector_proto_msgTypes[2]
+	mi := &file_collector_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -195,7 +628,7 @@ func (x *ReportSummary) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReportSummary.ProtoReflect.Descriptor instead.
 func (*ReportSummary) Descriptor() ([]byte, []int) {
-	return file_collector_proto_rawDescGZIP(), []int{2}
+	return file_collector_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ReportSummary) GetBatchCount() int64 {
@@ -205,9 +638,9 @@ func (x *ReportSummary) GetBatchCount() int64 {
 	return 0
 }
 
-func (x *ReportSummary) GetMetricCount() int64 {
+func (x *ReportSummary) GetItemCount() int64 {
 	if x != nil {
-		return x.MetricCount
+		return x.ItemCount
 	}
 	return 0
 }
@@ -236,7 +669,7 @@ type SubscribeRequest struct {
 
 func (x *SubscribeRequest) Reset() {
 	*x = SubscribeRequest{}
-	mi := &file_collector_proto_msgTypes[3]
+	mi := &file_collector_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -248,7 +681,7 @@ func (x *SubscribeRequest) String() string {
 func (*SubscribeRequest) ProtoMessage() {}
 
 func (x *SubscribeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_collector_proto_msgTypes[3]
+	mi := &file_collector_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -261,7 +694,7 @@ func (x *SubscribeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubscribeRequest.ProtoReflect.Descriptor instead.
 func (*SubscribeRequest) Descriptor() ([]byte, []int) {
-	return file_collector_proto_rawDescGZIP(), []int{3}
+	return file_collector_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *SubscribeRequest) GetAgentId() string {
@@ -280,16 +713,16 @@ func (x *SubscribeRequest) GetCapabilities() []string {
 
 type CollectTarget struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
-	Target          string                 `protobuf:"bytes,1,opt,name=target,proto3" json:"target,omitempty"`                                           // 수집 대상
-	IntervalSeconds int32                  `protobuf:"varint,2,opt,name=interval_seconds,json=intervalSeconds,proto3" json:"interval_seconds,omitempty"` // 수집 주기
-	Enabled         bool                   `protobuf:"varint,3,opt,name=enabled,proto3" json:"enabled,omitempty"`                                        // false 면 수집 중단
+	Target          string                 `protobuf:"bytes,1,opt,name=target,proto3" json:"target,omitempty"` // meta/pod, metric/pod, log/pod ...
+	IntervalSeconds int32                  `protobuf:"varint,2,opt,name=interval_seconds,json=intervalSeconds,proto3" json:"interval_seconds,omitempty"`
+	Enabled         bool                   `protobuf:"varint,3,opt,name=enabled,proto3" json:"enabled,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
 
 func (x *CollectTarget) Reset() {
 	*x = CollectTarget{}
-	mi := &file_collector_proto_msgTypes[4]
+	mi := &file_collector_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -301,7 +734,7 @@ func (x *CollectTarget) String() string {
 func (*CollectTarget) ProtoMessage() {}
 
 func (x *CollectTarget) ProtoReflect() protoreflect.Message {
-	mi := &file_collector_proto_msgTypes[4]
+	mi := &file_collector_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -314,7 +747,7 @@ func (x *CollectTarget) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CollectTarget.ProtoReflect.Descriptor instead.
 func (*CollectTarget) Descriptor() ([]byte, []int) {
-	return file_collector_proto_rawDescGZIP(), []int{4}
+	return file_collector_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *CollectTarget) GetTarget() string {
@@ -347,7 +780,7 @@ type HealthRequest struct {
 
 func (x *HealthRequest) Reset() {
 	*x = HealthRequest{}
-	mi := &file_collector_proto_msgTypes[5]
+	mi := &file_collector_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -359,7 +792,7 @@ func (x *HealthRequest) String() string {
 func (*HealthRequest) ProtoMessage() {}
 
 func (x *HealthRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_collector_proto_msgTypes[5]
+	mi := &file_collector_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -372,7 +805,7 @@ func (x *HealthRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthRequest.ProtoReflect.Descriptor instead.
 func (*HealthRequest) Descriptor() ([]byte, []int) {
-	return file_collector_proto_rawDescGZIP(), []int{5}
+	return file_collector_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *HealthRequest) GetAgentId() string {
@@ -392,7 +825,7 @@ type HealthResponse struct {
 
 func (x *HealthResponse) Reset() {
 	*x = HealthResponse{}
-	mi := &file_collector_proto_msgTypes[6]
+	mi := &file_collector_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -404,7 +837,7 @@ func (x *HealthResponse) String() string {
 func (*HealthResponse) ProtoMessage() {}
 
 func (x *HealthResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_collector_proto_msgTypes[6]
+	mi := &file_collector_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -417,7 +850,7 @@ func (x *HealthResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthResponse.ProtoReflect.Descriptor instead.
 func (*HealthResponse) Descriptor() ([]byte, []int) {
-	return file_collector_proto_rawDescGZIP(), []int{6}
+	return file_collector_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *HealthResponse) GetOk() bool {
@@ -438,25 +871,73 @@ var File_collector_proto protoreflect.FileDescriptor
 
 const file_collector_proto_rawDesc = "" +
 	"\n" +
-	"\x0fcollector.proto\x12\fcollector.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xaf\x01\n" +
-	"\vMetricBatch\x12\x19\n" +
-	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x16\n" +
-	"\x06target\x18\x02 \x01(\tR\x06target\x12.\n" +
-	"\ametrics\x18\x03 \x03(\v2\x14.collector.v1.MetricR\ametrics\x12=\n" +
-	"\fcollected_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\vcollectedAt\"\xc8\x01\n" +
-	"\x06Metric\x12\x12\n" +
-	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1f\n" +
-	"\vresource_id\x18\x02 \x01(\tR\n" +
-	"resourceId\x12\x14\n" +
-	"\x05value\x18\x03 \x01(\x01R\x05value\x128\n" +
-	"\x06labels\x18\x04 \x03(\v2 .collector.v1.Metric.LabelsEntryR\x06labels\x1a9\n" +
+	"\x0fcollector.proto\x12\fcollector.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xb9\x01\n" +
+	"\tMetaBatch\x12\x19\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x18\n" +
+	"\acluster\x18\x02 \x01(\tR\acluster\x128\n" +
+	"\tresources\x18\x03 \x03(\v2\x1a.collector.v1.ResourceMetaR\tresources\x12=\n" +
+	"\fcollected_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\vcollectedAt\"\xf5\x03\n" +
+	"\fResourceMeta\x12\x10\n" +
+	"\x03uid\x18\x01 \x01(\tR\x03uid\x12\x12\n" +
+	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x12\n" +
+	"\x04name\x18\x03 \x01(\tR\x04name\x12\x1c\n" +
+	"\tnamespace\x18\x04 \x01(\tR\tnamespace\x12>\n" +
+	"\x06labels\x18\x05 \x03(\v2&.collector.v1.ResourceMeta.LabelsEntryR\x06labels\x12\x16\n" +
+	"\x06status\x18\x06 \x01(\tR\x06status\x129\n" +
+	"\n" +
+	"created_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x124\n" +
+	"\trelations\x18\b \x03(\v2\x16.collector.v1.RelationR\trelations\x12J\n" +
+	"\n" +
+	"attributes\x18\t \x03(\v2*.collector.v1.ResourceMeta.AttributesEntryR\n" +
+	"attributes\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x8e\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a=\n" +
+	"\x0fAttributesEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xaa\x01\n" +
+	"\bRelation\x12\x12\n" +
+	"\x04type\x18\x01 \x01(\tR\x04type\x12\x1f\n" +
+	"\vtarget_kind\x18\x02 \x01(\tR\n" +
+	"targetKind\x12\x1f\n" +
+	"\vtarget_name\x18\x03 \x01(\tR\n" +
+	"targetName\x12)\n" +
+	"\x10target_namespace\x18\x04 \x01(\tR\x0ftargetNamespace\x12\x1d\n" +
+	"\n" +
+	"target_uid\x18\x05 \x01(\tR\ttargetUid\"\xb1\x01\n" +
+	"\vMetricBatch\x12\x19\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x18\n" +
+	"\acluster\x18\x02 \x01(\tR\acluster\x12.\n" +
+	"\ametrics\x18\x03 \x03(\v2\x14.collector.v1.MetricR\ametrics\x12=\n" +
+	"\fcollected_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\vcollectedAt\"\x8d\x02\n" +
+	"\x06Metric\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12!\n" +
+	"\fresource_uid\x18\x02 \x01(\tR\vresourceUid\x12#\n" +
+	"\rresource_name\x18\x03 \x01(\tR\fresourceName\x12\x1c\n" +
+	"\tnamespace\x18\x04 \x01(\tR\tnamespace\x12\x14\n" +
+	"\x05value\x18\x05 \x01(\x01R\x05value\x128\n" +
+	"\x06labels\x18\x06 \x03(\v2 .collector.v1.Metric.LabelsEntryR\x06labels\x1a9\n" +
+	"\vLabelsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xb0\x01\n" +
+	"\bLogBatch\x12\x19\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x18\n" +
+	"\acluster\x18\x02 \x01(\tR\acluster\x120\n" +
+	"\aentries\x18\x03 \x03(\v2\x16.collector.v1.LogEntryR\aentries\x12=\n" +
+	"\fcollected_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\vcollectedAt\"\xe4\x01\n" +
+	"\bLogEntry\x12\x17\n" +
+	"\apod_uid\x18\x01 \x01(\tR\x06podUid\x12\x19\n" +
+	"\bpod_name\x18\x02 \x01(\tR\apodName\x12\x1c\n" +
+	"\tnamespace\x18\x03 \x01(\tR\tnamespace\x12\x1c\n" +
+	"\tcontainer\x18\x04 \x01(\tR\tcontainer\x12\x18\n" +
+	"\amessage\x18\x05 \x01(\tR\amessage\x12\x14\n" +
+	"\x05level\x18\x06 \x01(\tR\x05level\x128\n" +
+	"\ttimestamp\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\"\x8a\x01\n" +
 	"\rReportSummary\x12\x1f\n" +
 	"\vbatch_count\x18\x01 \x01(\x03R\n" +
-	"batchCount\x12!\n" +
-	"\fmetric_count\x18\x02 \x01(\x03R\vmetricCount\x12\x1a\n" +
+	"batchCount\x12\x1d\n" +
+	"\n" +
+	"item_count\x18\x02 \x01(\x03R\titemCount\x12\x1a\n" +
 	"\brejected\x18\x03 \x01(\x03R\brejected\x12\x1d\n" +
 	"\n" +
 	"elapsed_ms\x18\x04 \x01(\x03R\telapsedMs\"Q\n" +
@@ -471,11 +952,14 @@ const file_collector_proto_rawDesc = "" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\"G\n" +
 	"\x0eHealthResponse\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12%\n" +
-	"\x0eserver_version\x18\x02 \x01(\tR\rserverVersion2\xe7\x01\n" +
-	"\x10CollectorService\x12B\n" +
-	"\x06Report\x12\x19.collector.v1.MetricBatch\x1a\x1b.collector.v1.ReportSummary(\x01\x12J\n" +
+	"\x0eserver_version\x18\x02 \x01(\tR\rserverVersion2\xf7\x02\n" +
+	"\x10CollectorService\x12D\n" +
+	"\n" +
+	"ReportMeta\x12\x17.collector.v1.MetaBatch\x1a\x1b.collector.v1.ReportSummary(\x01\x12H\n" +
+	"\fReportMetric\x12\x19.collector.v1.MetricBatch\x1a\x1b.collector.v1.ReportSummary(\x01\x12B\n" +
+	"\tReportLog\x12\x16.collector.v1.LogBatch\x1a\x1b.collector.v1.ReportSummary(\x01\x12J\n" +
 	"\tSubscribe\x12\x1e.collector.v1.SubscribeRequest\x1a\x1b.collector.v1.CollectTarget0\x01\x12C\n" +
-	"\x06Health\x12\x1b.collector.v1.HealthRequest\x1a\x1c.collector.v1.HealthResponseBIZGgithub.com/pxvnc1617/grpc-metric-collector/gen/collector/v1;collectorv1b\x06proto3"
+	"\x06Health\x12\x1b.collector.v1.HealthRequest\x1a\x1c.collector.v1.HealthResponseBMZKgithub.com/pxvnc1617/grpc-kubernetes-collector/gen/collector/v1;collectorv1b\x06proto3"
 
 var (
 	file_collector_proto_rawDescOnce sync.Once
@@ -489,33 +973,53 @@ func file_collector_proto_rawDescGZIP() []byte {
 	return file_collector_proto_rawDescData
 }
 
-var file_collector_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_collector_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
 var file_collector_proto_goTypes = []any{
-	(*MetricBatch)(nil),           // 0: collector.v1.MetricBatch
-	(*Metric)(nil),                // 1: collector.v1.Metric
-	(*ReportSummary)(nil),         // 2: collector.v1.ReportSummary
-	(*SubscribeRequest)(nil),      // 3: collector.v1.SubscribeRequest
-	(*CollectTarget)(nil),         // 4: collector.v1.CollectTarget
-	(*HealthRequest)(nil),         // 5: collector.v1.HealthRequest
-	(*HealthResponse)(nil),        // 6: collector.v1.HealthResponse
-	nil,                           // 7: collector.v1.Metric.LabelsEntry
-	(*timestamppb.Timestamp)(nil), // 8: google.protobuf.Timestamp
+	(*MetaBatch)(nil),             // 0: collector.v1.MetaBatch
+	(*ResourceMeta)(nil),          // 1: collector.v1.ResourceMeta
+	(*Relation)(nil),              // 2: collector.v1.Relation
+	(*MetricBatch)(nil),           // 3: collector.v1.MetricBatch
+	(*Metric)(nil),                // 4: collector.v1.Metric
+	(*LogBatch)(nil),              // 5: collector.v1.LogBatch
+	(*LogEntry)(nil),              // 6: collector.v1.LogEntry
+	(*ReportSummary)(nil),         // 7: collector.v1.ReportSummary
+	(*SubscribeRequest)(nil),      // 8: collector.v1.SubscribeRequest
+	(*CollectTarget)(nil),         // 9: collector.v1.CollectTarget
+	(*HealthRequest)(nil),         // 10: collector.v1.HealthRequest
+	(*HealthResponse)(nil),        // 11: collector.v1.HealthResponse
+	nil,                           // 12: collector.v1.ResourceMeta.LabelsEntry
+	nil,                           // 13: collector.v1.ResourceMeta.AttributesEntry
+	nil,                           // 14: collector.v1.Metric.LabelsEntry
+	(*timestamppb.Timestamp)(nil), // 15: google.protobuf.Timestamp
 }
 var file_collector_proto_depIdxs = []int32{
-	1, // 0: collector.v1.MetricBatch.metrics:type_name -> collector.v1.Metric
-	8, // 1: collector.v1.MetricBatch.collected_at:type_name -> google.protobuf.Timestamp
-	7, // 2: collector.v1.Metric.labels:type_name -> collector.v1.Metric.LabelsEntry
-	0, // 3: collector.v1.CollectorService.Report:input_type -> collector.v1.MetricBatch
-	3, // 4: collector.v1.CollectorService.Subscribe:input_type -> collector.v1.SubscribeRequest
-	5, // 5: collector.v1.CollectorService.Health:input_type -> collector.v1.HealthRequest
-	2, // 6: collector.v1.CollectorService.Report:output_type -> collector.v1.ReportSummary
-	4, // 7: collector.v1.CollectorService.Subscribe:output_type -> collector.v1.CollectTarget
-	6, // 8: collector.v1.CollectorService.Health:output_type -> collector.v1.HealthResponse
-	6, // [6:9] is the sub-list for method output_type
-	3, // [3:6] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	1,  // 0: collector.v1.MetaBatch.resources:type_name -> collector.v1.ResourceMeta
+	15, // 1: collector.v1.MetaBatch.collected_at:type_name -> google.protobuf.Timestamp
+	12, // 2: collector.v1.ResourceMeta.labels:type_name -> collector.v1.ResourceMeta.LabelsEntry
+	15, // 3: collector.v1.ResourceMeta.created_at:type_name -> google.protobuf.Timestamp
+	2,  // 4: collector.v1.ResourceMeta.relations:type_name -> collector.v1.Relation
+	13, // 5: collector.v1.ResourceMeta.attributes:type_name -> collector.v1.ResourceMeta.AttributesEntry
+	4,  // 6: collector.v1.MetricBatch.metrics:type_name -> collector.v1.Metric
+	15, // 7: collector.v1.MetricBatch.collected_at:type_name -> google.protobuf.Timestamp
+	14, // 8: collector.v1.Metric.labels:type_name -> collector.v1.Metric.LabelsEntry
+	6,  // 9: collector.v1.LogBatch.entries:type_name -> collector.v1.LogEntry
+	15, // 10: collector.v1.LogBatch.collected_at:type_name -> google.protobuf.Timestamp
+	15, // 11: collector.v1.LogEntry.timestamp:type_name -> google.protobuf.Timestamp
+	0,  // 12: collector.v1.CollectorService.ReportMeta:input_type -> collector.v1.MetaBatch
+	3,  // 13: collector.v1.CollectorService.ReportMetric:input_type -> collector.v1.MetricBatch
+	5,  // 14: collector.v1.CollectorService.ReportLog:input_type -> collector.v1.LogBatch
+	8,  // 15: collector.v1.CollectorService.Subscribe:input_type -> collector.v1.SubscribeRequest
+	10, // 16: collector.v1.CollectorService.Health:input_type -> collector.v1.HealthRequest
+	7,  // 17: collector.v1.CollectorService.ReportMeta:output_type -> collector.v1.ReportSummary
+	7,  // 18: collector.v1.CollectorService.ReportMetric:output_type -> collector.v1.ReportSummary
+	7,  // 19: collector.v1.CollectorService.ReportLog:output_type -> collector.v1.ReportSummary
+	9,  // 20: collector.v1.CollectorService.Subscribe:output_type -> collector.v1.CollectTarget
+	11, // 21: collector.v1.CollectorService.Health:output_type -> collector.v1.HealthResponse
+	17, // [17:22] is the sub-list for method output_type
+	12, // [12:17] is the sub-list for method input_type
+	12, // [12:12] is the sub-list for extension type_name
+	12, // [12:12] is the sub-list for extension extendee
+	0,  // [0:12] is the sub-list for field type_name
 }
 
 func init() { file_collector_proto_init() }
@@ -529,7 +1033,7 @@ func file_collector_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_collector_proto_rawDesc), len(file_collector_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   8,
+			NumMessages:   15,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

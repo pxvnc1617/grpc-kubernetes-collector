@@ -3,29 +3,51 @@ package main
 import (
 	"context"
 	"flag"
-	"fmt"
 	"log/slog"
-	"math/rand"
 	"os"
+	"os/signal"
+	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 
-	collectorv1 "github.com/pxvnc1617/grpc-metric-collector/gen/collector/v1"
+	collectorv1 "github.com/pxvnc1617/grpc-kubernetes-collector/gen/collector/v1"
+	"github.com/pxvnc1617/grpc-kubernetes-collector/internal/collector"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/protobuf/types/known/timestamppb"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+	metricsv "k8s.io/metrics/pkg/client/clientset/versioned"
 )
 
 func main() {
-	addr := flag.String("addr", "localhost:50051", "server address")
-	agentID := flag.String("agent-id", "agent-01", "agent identifier")
-	batches := flag.Int("batches", 20, "number of batches to send")
-	perBatch := flag.Int("per-batch", 100, "metrics per batch")
+	addr := flag.String("addr", "localhost:50051", "collector server address")
+	agentID := flag.String("agent-id", "agent-local", "agent identifier")
+	cluster := flag.String("cluster", "kind-grpc-k8s-collector", "cluster identifier")
+	kubeconfig := flag.String("kubeconfig", defaultKubeconfig(), "kubeconfig path (empty = in-cluster)")
+	batchSize := flag.Int("batch", 50, "items per batch")
+	once := flag.Bool("once", false, "collect once and exit")
 	flag.Parse()
 
-	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
-	conn, err := grpc.NewClient(*addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	cs, mc, err := buildClients(*kubeconfig)
+	if err != nil {
+		log.Error("kubernetes client init failed", "err", err)
+		os.Exit(1)
+	}
+
+	conn, err := grpc.NewClient(*addr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                30 * time.Second,
+			Timeout:             10 * time.Second,
+			PermitWithoutStream: true,
+		}),
+	)
 	if err != nil {
 		log.Error("dial failed", "addr", *addr, "err", err)
 		os.Exit(1)
@@ -34,63 +56,185 @@ func main() {
 
 	client := collectorv1.NewCollectorServiceClient(conn)
 
-	// 에이전트 전체 수명을 관리하는 컨텍스트.
-	// 구독 스트림은 여기에 묶어 오래 유지하고, 개별 RPC 는 아래에서
-	// 각자 짧은 타임아웃을 따로 건다. 둘을 같은 데드라인으로 묶으면
-	// 장시간 구독 때문에 전송이 같이 죽는다.
-	rootCtx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// 1) 연결 확인 (unary)
-	if err := healthCheck(rootCtx, client, *agentID, log); err != nil {
+	// 기동 확인. 서버가 없으면 여기서 끝낸다.
+	healthCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	hr, err := client.Health(healthCtx, &collectorv1.HealthRequest{AgentId: *agentID})
+	cancel()
+	if err != nil {
 		log.Error("health check failed", "err", err)
 		os.Exit(1)
 	}
+	log.Info("connected", "server_version", hr.GetServerVersion())
 
-	// 2) 수집 대상 구독 (server streaming)
-	//    스트림은 서버가 변경을 푸시하기 위해 계속 열려 있으므로
-	//    백그라운드에서 돌리고, 초기 목록만 짧게 기다렸다 진행한다.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// 구독은 별도 고루틴으로 돌린다.
+	//
+	// 서버는 Subscribe 스트림을 푸시용으로 계속 열어 두므로 io.EOF 가 오지 않는다.
+	// 이걸 동기로 읽으면 영원히 블록되고, 전송과 컨텍스트를 공유하면
+	// 전송까지 같은 데드라인에 걸린다. 그래서 분리한다.
 	sub := newSubscription(log)
-	go sub.run(rootCtx, client, *agentID)
-
+	go sub.run(ctx, client, *agentID)
 	targets := sub.waitInitial(2 * time.Second)
-	log.Info("targets ready", "targets", targets)
+	log.Info("collect targets", "targets", targets)
 
-	// 3) 메트릭 배치 전송 (client streaming)
-	reportCtx, reportCancel := context.WithTimeout(rootCtx, 30*time.Second)
-	defer reportCancel()
-
-	summary, err := report(reportCtx, client, *agentID, targets, *batches, *perBatch)
-	if err != nil {
-		log.Error("report failed", "err", err)
-		os.Exit(1)
+	run := func() {
+		collectOnce(ctx, log, client, cs, mc, *agentID, *cluster, *batchSize)
 	}
 
-	log.Info("report summary",
-		"batches", summary.GetBatchCount(),
-		"metrics", summary.GetMetricCount(),
-		"rejected", summary.GetRejected(),
-		"elapsed_ms", summary.GetElapsedMs())
+	run()
+	if *once {
+		return
+	}
+
+	ticker := time.NewTicker(20 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			log.Info("agent stopped")
+			return
+		case <-ticker.C:
+			run()
+		}
+	}
 }
 
-func healthCheck(
+// collectOnce 는 메타 · 메트릭 · 로그를 한 차례 수집해 전송한다.
+//
+// 세 가지를 병렬로 돌리지 않는다. 같은 API 서버를 동시에 때리면
+// 수집기가 클러스터에 부담을 주는 쪽이 되기 때문이다.
+func collectOnce(
 	ctx context.Context,
-	c collectorv1.CollectorServiceClient,
-	agentID string,
 	log *slog.Logger,
-) error {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	client collectorv1.CollectorServiceClient,
+	cs kubernetes.Interface,
+	mc metricsv.Interface,
+	agentID, cluster string,
+	batchSize int,
+) {
+	// ── 메타 ──────────────────────────────────────────────────
+	metaCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	resources, err := collector.CollectMeta(metaCtx, cs)
+	cancel()
+	if err != nil {
+		log.Error("meta collect failed", "err", err)
+	} else if sum, err := sendMeta(ctx, client, agentID, cluster, resources, batchSize); err != nil {
+		log.Error("meta send failed", "err", err)
+	} else {
+		log.Info("meta sent",
+			"resources", len(resources),
+			"batches", sum.GetBatchCount(), "rejected", sum.GetRejected(),
+			"elapsed_ms", sum.GetElapsedMs())
+	}
+
+	// ── 메트릭 ────────────────────────────────────────────────
+	metricCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	metrics, err := collector.CollectMetrics(metricCtx, mc, cs)
+	cancel()
+	if err != nil {
+		// metrics-server 가 아직 준비 중일 수 있다. 치명적으로 보지 않는다.
+		log.Warn("metric collect skipped", "err", err)
+	} else if len(metrics) > 0 {
+		if sum, err := sendMetric(ctx, client, agentID, cluster, metrics, batchSize); err != nil {
+			log.Error("metric send failed", "err", err)
+		} else {
+			log.Info("metric sent",
+				"metrics", len(metrics),
+				"batches", sum.GetBatchCount(), "rejected", sum.GetRejected(),
+				"elapsed_ms", sum.GetElapsedMs())
+		}
+	}
+
+	// ── 로그 ──────────────────────────────────────────────────
+	logCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	entries, err := collector.CollectLogs(logCtx, cs, 20)
+	cancel()
+	if err != nil {
+		log.Error("log collect failed", "err", err)
+	} else if len(entries) > 0 {
+		if sum, err := sendLog(ctx, client, agentID, cluster, entries, batchSize); err != nil {
+			log.Error("log send failed", "err", err)
+		} else {
+			log.Info("log sent",
+				"entries", len(entries),
+				"batches", sum.GetBatchCount(), "rejected", sum.GetRejected(),
+				"elapsed_ms", sum.GetElapsedMs())
+		}
+	}
+}
+
+// ══════════════ 전송 ════════════════════════════════════════
+
+func sendMeta(ctx context.Context, c collectorv1.CollectorServiceClient, agentID, cluster string, items []*collectorv1.ResourceMeta, size int) (*collectorv1.ReportSummary, error) {
+	sendCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	res, err := c.Health(ctx, &collectorv1.HealthRequest{AgentId: agentID})
+	stream, err := c.ReportMeta(sendCtx)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	log.Info("connected", "server_version", res.GetServerVersion())
-	return nil
+	for start := 0; start < len(items); start += size {
+		end := min(start+size, len(items))
+		if err := stream.Send(&collectorv1.MetaBatch{
+			AgentId:     agentID,
+			Cluster:     cluster,
+			Resources:   items[start:end],
+			CollectedAt: timestamppb.Now(),
+		}); err != nil {
+			return nil, err
+		}
+	}
+	return stream.CloseAndRecv()
 }
 
-// subscription 은 서버가 푸시하는 수집 대상을 계속 반영한다.
+func sendMetric(ctx context.Context, c collectorv1.CollectorServiceClient, agentID, cluster string, items []*collectorv1.Metric, size int) (*collectorv1.ReportSummary, error) {
+	sendCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	stream, err := c.ReportMetric(sendCtx)
+	if err != nil {
+		return nil, err
+	}
+	for start := 0; start < len(items); start += size {
+		end := min(start+size, len(items))
+		if err := stream.Send(&collectorv1.MetricBatch{
+			AgentId:     agentID,
+			Cluster:     cluster,
+			Metrics:     items[start:end],
+			CollectedAt: timestamppb.Now(),
+		}); err != nil {
+			return nil, err
+		}
+	}
+	return stream.CloseAndRecv()
+}
+
+func sendLog(ctx context.Context, c collectorv1.CollectorServiceClient, agentID, cluster string, items []*collectorv1.LogEntry, size int) (*collectorv1.ReportSummary, error) {
+	sendCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	stream, err := c.ReportLog(sendCtx)
+	if err != nil {
+		return nil, err
+	}
+	for start := 0; start < len(items); start += size {
+		end := min(start+size, len(items))
+		if err := stream.Send(&collectorv1.LogBatch{
+			AgentId:     agentID,
+			Cluster:     cluster,
+			Entries:     items[start:end],
+			CollectedAt: timestamppb.Now(),
+		}); err != nil {
+			return nil, err
+		}
+	}
+	return stream.CloseAndRecv()
+}
+
+// ══════════════ 구독 ════════════════════════════════════════
+
 type subscription struct {
 	log *slog.Logger
 
@@ -109,11 +253,10 @@ func newSubscription(log *slog.Logger) *subscription {
 	}
 }
 
-// run 은 컨텍스트가 끝날 때까지 스트림을 유지하며 대상 변경을 반영한다.
 func (s *subscription) run(ctx context.Context, c collectorv1.CollectorServiceClient, agentID string) {
 	stream, err := c.Subscribe(ctx, &collectorv1.SubscribeRequest{
 		AgentId:      agentID,
-		Capabilities: []string{"aws/ec2", "k8s/pod", "vsphere/vm"},
+		Capabilities: []string{"meta/all", "metric/pod", "log/pod"},
 	})
 	if err != nil {
 		s.log.Error("subscribe failed", "err", err)
@@ -123,38 +266,19 @@ func (s *subscription) run(ctx context.Context, c collectorv1.CollectorServiceCl
 
 	// 첫 배치를 받으면 waitInitial 을 풀어준다.
 	// 이후에도 스트림은 유지되어 서버의 대상 변경을 계속 받는다.
-	first := true
 	for {
 		t, err := stream.Recv()
 		if err != nil {
-			if ctx.Err() == nil {
-				s.log.Warn("subscription closed", "err", err)
-			}
 			s.markReady()
 			return
 		}
-
 		s.mu.Lock()
 		s.targets[t.GetTarget()] = t.GetEnabled()
 		s.mu.Unlock()
-
-		s.log.Info("target updated",
-			"target", t.GetTarget(),
-			"enabled", t.GetEnabled(),
-			"interval_seconds", t.GetIntervalSeconds())
-
-		if first {
-			// 서버가 초기 목록을 연달아 보내므로 잠깐 더 받아본 뒤 풀어준다.
-			first = false
-			go func() {
-				time.Sleep(200 * time.Millisecond)
-				s.markReady()
-			}()
-		}
+		s.markReady()
 	}
 }
 
-// waitInitial 은 초기 대상 목록을 기다린다. 타임아웃이면 현재까지 받은 것만 쓴다.
 func (s *subscription) waitInitial(timeout time.Duration) []string {
 	select {
 	case <-s.ready:
@@ -172,7 +296,7 @@ func (s *subscription) waitInitial(timeout time.Duration) []string {
 		}
 	}
 	if len(enabled) == 0 {
-		enabled = []string{"aws/ec2"}
+		enabled = []string{"meta/all", "metric/pod", "log/pod"}
 	}
 	return enabled
 }
@@ -181,46 +305,39 @@ func (s *subscription) markReady() {
 	s.once.Do(func() { close(s.ready) })
 }
 
-func report(
-	ctx context.Context,
-	c collectorv1.CollectorServiceClient,
-	agentID string,
-	targets []string,
-	batchCount, perBatch int,
-) (*collectorv1.ReportSummary, error) {
-	stream, err := c.Report(ctx)
+// ══════════════ 클라이언트 ══════════════════════════════════
+
+func buildClients(kubeconfig string) (*kubernetes.Clientset, *metricsv.Clientset, error) {
+	var cfg *rest.Config
+	var err error
+
+	if kubeconfig == "" {
+		cfg, err = rest.InClusterConfig()
+	} else {
+		cfg, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
+	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	for i := 0; i < batchCount; i++ {
-		target := targets[i%len(targets)]
-		batch := &collectorv1.MetricBatch{
-			AgentId:     agentID,
-			Target:      target,
-			CollectedAt: timestamppb.Now(),
-			Metrics:     generateMetrics(target, perBatch),
-		}
-		if err := stream.Send(batch); err != nil {
-			return nil, fmt.Errorf("send batch %d: %w", i, err)
-		}
+	cs, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return nil, nil, err
 	}
-
-	return stream.CloseAndRecv()
+	mc, err := metricsv.NewForConfig(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	return cs, mc, nil
 }
 
-func generateMetrics(target string, n int) []*collectorv1.Metric {
-	metrics := make([]*collectorv1.Metric, 0, n)
-	for i := 0; i < n; i++ {
-		metrics = append(metrics, &collectorv1.Metric{
-			Name:       "cpu_usage_percent",
-			ResourceId: fmt.Sprintf("%s-%04d", target, i),
-			Value:      rand.Float64() * 100,
-			Labels: map[string]string{
-				"region": "ap-northeast-2",
-				"target": target,
-			},
-		})
+func defaultKubeconfig() string {
+	if v := os.Getenv("KUBECONFIG"); v != "" {
+		return v
 	}
-	return metrics
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".kube", "config")
 }

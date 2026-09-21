@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package collector.v1;
 
-option go_package = "github.com/pxvnc1617/grpc-metric-collector/gen/collector/v1;collectorv1";
+option go_package = "github.com/pxvnc1617/grpc-kubernetes-collector/gen/collector/v1;collectorv1";
 
 import "google/protobuf/timestamp.proto";
 
@@ -13,10 +13,21 @@ import "google/protobuf/timestamp.proto";
 //     (RPC 왕복 비용을 줄이고 처리량을 확보하기 위함)
 //   - 수집 대상은 서버가 결정해 푸시한다. 에이전트를 재배포하지 않고
 //     수집 범위를 바꾸기 위해서다.
+//   - 메타 · 메트릭 · 로그는 성격이 달라 RPC 를 나눴다.
+//     메타는 스펙과 참조 관계, 메트릭은 수치, 로그는 텍스트 줄이다.
 service CollectorService {
-  // Report 는 client streaming 이다.
-  // 에이전트가 메트릭 배치를 연속 전송하고, 서버는 스트림 종료 시 집계 결과를 반환한다.
-  rpc Report(stream MetricBatch) returns (ReportSummary);
+  // ── 수집 결과 전송 (client streaming) ──────────────────────
+
+  // ReportMeta 는 자원 메타데이터 배치를 전송한다.
+  rpc ReportMeta(stream MetaBatch) returns (ReportSummary);
+
+  // ReportMetric 은 메트릭 배치를 전송한다.
+  rpc ReportMetric(stream MetricBatch) returns (ReportSummary);
+
+  // ReportLog 는 로그 배치를 전송한다.
+  rpc ReportLog(stream LogBatch) returns (ReportSummary);
+
+  // ── 제어 ───────────────────────────────────────────────────
 
   // Subscribe 는 server streaming 이다.
   // 에이전트가 구독하면 서버가 수집 대상 변경을 푸시한다.
@@ -26,30 +37,85 @@ service CollectorService {
   rpc Health(HealthRequest) returns (HealthResponse);
 }
 
-// ── 수집 결과 ────────────────────────────────────────────────
+// ══════════════ 메타데이터 ══════════════════════════════════
+
+message MetaBatch {
+  string agent_id = 1;
+  string cluster = 2;                           // 수집한 클러스터 식별자
+  repeated ResourceMeta resources = 3;
+  google.protobuf.Timestamp collected_at = 4;
+}
+
+message ResourceMeta {
+  string uid = 1;                        // 쿠버네티스 UID
+  string kind = 2;                       // Pod, Deployment, ConfigMap ...
+  string name = 3;
+  string namespace = 4;                  // 클러스터 스코프 자원은 빈 문자열
+  map<string, string> labels = 5;
+  string status = 6;                     // Running, Available ...
+  google.protobuf.Timestamp created_at = 7;
+  repeated Relation relations = 8;       // 이 자원이 맺는 관계
+  map<string, string> attributes = 9;    // 종류별 부가 속성 (replicas, image ...)
+}
+
+// Relation 은 자원 사이의 관계를 표현한다.
+//
+// 쿠버네티스에서 자원 간 참조는 UID 가 아니라 "이름" 으로 적힌다.
+// 워크로드 스펙의 configMapRef / secretRef 에는 이름만 있으므로,
+// 실제 자원과 이으려면 namespace + name 으로 해석해 UID 를 찾아야 한다.
+message Relation {
+  string type = 1;              // PARENT_CHILD | DEPENDENCY | ASSOCIATION
+  string target_kind = 2;
+  string target_name = 3;
+  string target_namespace = 4;
+  string target_uid = 5;        // 해석에 성공하면 채워진다. 실패 시 빈 문자열
+}
+
+// ══════════════ 메트릭 ══════════════════════════════════════
 
 message MetricBatch {
-  string agent_id = 1;                          // 에이전트 식별자
-  string target = 2;                            // 수집 대상 (예: aws/ec2, k8s/pod)
-  repeated Metric metrics = 3;                  // 배치에 담긴 메트릭
-  google.protobuf.Timestamp collected_at = 4;   // 수집 시각
+  string agent_id = 1;
+  string cluster = 2;
+  repeated Metric metrics = 3;
+  google.protobuf.Timestamp collected_at = 4;
 }
 
 message Metric {
-  string name = 1;                     // 메트릭 이름 (예: cpu_usage_percent)
-  string resource_id = 2;              // 자원 식별자
-  double value = 3;
-  map<string, string> labels = 4;      // 부가 속성 (region, namespace 등)
+  string name = 1;                     // cpu_usage_millicores, memory_usage_bytes
+  string resource_uid = 2;             // 대상 자원 UID
+  string resource_name = 3;
+  string namespace = 4;
+  double value = 5;
+  map<string, string> labels = 6;
 }
+
+// ══════════════ 로그 ════════════════════════════════════════
+
+message LogBatch {
+  string agent_id = 1;
+  string cluster = 2;
+  repeated LogEntry entries = 3;
+  google.protobuf.Timestamp collected_at = 4;
+}
+
+message LogEntry {
+  string pod_uid = 1;
+  string pod_name = 2;
+  string namespace = 3;
+  string container = 4;
+  string message = 5;
+  string level = 6;                          // 메시지에서 추출. 실패 시 "unknown"
+  google.protobuf.Timestamp timestamp = 7;
+}
+
+// ══════════════ 공통 ════════════════════════════════════════
 
 message ReportSummary {
   int64 batch_count = 1;    // 수신한 배치 수
-  int64 metric_count = 2;   // 수신한 메트릭 총 개수
+  int64 item_count = 2;     // 수신한 항목 총 개수
   int64 rejected = 3;       // 검증 실패로 버린 개수
   int64 elapsed_ms = 4;     // 스트림 처리 소요 시간
 }
-
-// ── 수집 대상 구독 ───────────────────────────────────────────
 
 message SubscribeRequest {
   string agent_id = 1;
@@ -57,12 +123,10 @@ message SubscribeRequest {
 }
 
 message CollectTarget {
-  string target = 1;          // 수집 대상
-  int32 interval_seconds = 2; // 수집 주기
-  bool enabled = 3;           // false 면 수집 중단
+  string target = 1;          // meta/pod, metric/pod, log/pod ...
+  int32 interval_seconds = 2;
+  bool enabled = 3;
 }
-
-// ── 헬스체크 ─────────────────────────────────────────────────
 
 message HealthRequest {
   string agent_id = 1;

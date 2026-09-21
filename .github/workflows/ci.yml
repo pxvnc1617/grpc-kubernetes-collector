@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   test:
-    name: Lint & Test
+    name: Lint & Test (Go)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -38,20 +38,101 @@ jobs:
       - name: Coverage summary
         run: go tool cover -func=coverage.out | tail -1
 
-  build:
+  web:
+    name: Build (Vue)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install
+        working-directory: web
+        run: npm ci
+
+      - name: Build
+        working-directory: web
+        run: npm run build
+
+  # 로컬 클러스터를 실제로 띄워 수집이 되는지 확인한다.
+  # 단위 테스트는 fake clientset 을 쓰므로, 진짜 API 서버를 상대로
+  # 한 번은 돌려봐야 "동작한다" 고 말할 수 있다.
+  e2e:
+    name: E2E (kind)
+    runs-on: ubuntu-latest
+    needs: [test, web]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: ci
+          node_image: kindest/node:v1.29.4
+
+      - name: Deploy sample workloads
+        run: |
+          kubectl apply -f deploy/sample-workloads.yaml
+          kubectl wait --for=condition=available --timeout=180s deployment --all -n shop
+          kubectl wait --for=condition=available --timeout=120s deployment --all -n ops
+
+      - name: Run server
+        run: |
+          go run ./cmd/server > server.log 2>&1 &
+          sleep 5
+
+      - name: Collect once
+        run: go run ./cmd/agent -once -cluster ci
+
+      - name: Verify collection result
+        run: |
+          summary=$(curl -sf localhost:8080/api/summary)
+          echo "$summary" | python3 -m json.tool
+
+          resources=$(echo "$summary" | python3 -c 'import json,sys; print(json.load(sys.stdin)["stats"]["meta"]["items"])')
+          rejected=$(echo "$summary" | python3 -c 'import json,sys; s=json.load(sys.stdin)["stats"]; print(s["meta"]["rejected"]+s["metric"]["rejected"]+s["log"]["rejected"])')
+          total=$(echo "$summary" | python3 -c 'import json,sys; print(json.load(sys.stdin)["relations"]["total"])')
+          resolved=$(echo "$summary" | python3 -c 'import json,sys; print(json.load(sys.stdin)["relations"]["resolved"])')
+
+          echo "자원 $resources건 · 거절 $rejected건 · 관계 $resolved/$total"
+
+          [ "$resources" -ge 20 ] || { echo "수집된 자원이 너무 적다"; exit 1; }
+          [ "$rejected" -eq 0 ]   || { echo "거절된 배치가 있다"; exit 1; }
+          [ "$total" -gt 0 ]      || { echo "관계가 하나도 없다"; exit 1; }
+          # 이름 -> UID 해석이 전부 되어야 한다. 하나라도 실패하면
+          # 수집 대상에서 빠진 자원 종류가 있다는 뜻이다.
+          [ "$resolved" -eq "$total" ] || { echo "미해석 관계 있음"; exit 1; }
+
+      - name: Server log
+        if: always()
+        run: cat server.log
+
+  image:
     name: Build image
     runs-on: ubuntu-latest
-    needs: test
+    needs: [test, web]
     steps:
       - uses: actions/checkout@v4
 
       - name: Build Docker image
-        run: docker build -t grpc-metric-collector:${{ github.sha }} .
+        run: docker build -t grpc-kubernetes-collector:${{ github.sha }} .
 
       - name: Verify binary runs
         run: |
-          docker run --rm -d --name collector -p 50051:50051 \
-            grpc-metric-collector:${{ github.sha }}
+          docker run --rm -d --name collector -p 50051:50051 -p 8080:8080 \
+            grpc-kubernetes-collector:${{ github.sha }}
           sleep 3
           docker logs collector
+          curl -sf localhost:8080/api/healthz
           docker stop collector

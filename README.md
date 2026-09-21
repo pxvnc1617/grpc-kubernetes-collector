@@ -1,145 +1,199 @@
-# grpc-metric-collector
+# k8s-collector
 
-[![CI](https://github.com/pxvnc1617/grpc-metric-collector/actions/workflows/ci.yml/badge.svg)](https://github.com/pxvnc1617/grpc-metric-collector/actions/workflows/ci.yml)
+[![CI](https://github.com/pxvnc1617/grpc-kubernetes-collector/actions/workflows/ci.yml/badge.svg)](https://github.com/pxvnc1617/grpc-kubernetes-collector/actions/workflows/ci.yml)
 [![Go](https://img.shields.io/badge/Go-1.24-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![gRPC](https://img.shields.io/badge/gRPC-streaming-244c5a?logo=grpc&logoColor=white)](https://grpc.io)
+[![Vue](https://img.shields.io/badge/Vue-3-42b883?logo=vuedotjs&logoColor=white)](https://vuejs.org)
 
-gRPC 기반 메트릭 수집 파이프라인. 수집 에이전트와 수집 서버 사이의
-**전송 계층**을 gRPC 스트리밍으로 구현했다.
+쿠버네티스 자원의 **메타데이터 · 메트릭데이터 · 로그데이터**를 수집해 gRPC 스트리밍으로
+서버에 전송하고, 수집 현황을 대시보드로 보여준다.
 
-실무 수집기는 클라우드 API 를 호출해 데이터를 가져오고, **수집 결과는 Kafka 로 발행**하는
-구조였다. 메시지 브로커를 거치지 않고 **에이전트와 서버가 직접 통신한다면** 전송 계층을
-어떻게 설계해야 하는지 확인해 보려고 만들었다.
+```
+kind 클러스터                수집 에이전트                 수집 서버              대시보드
+──────────────              ──────────────               ──────────           ──────────
+Deployment                   client-go
+ReplicaSet    ──────────▶    ├ 메타    ──┐
+Pod                          ├ 메트릭  ──┤ gRPC          검증 ─ 집계
+ConfigMap                    └ 로그    ──┘ client         이름→UID 해석  ──▶  Vue 3 SPA
+Secret                                     streaming      메모리 보관        HTTP/JSON
+CronJob · Job                                  :50051                          :8080
+```
 
-설계 판단의 근거는 실무 경험에서 왔다.
+**실무에서는 수집 결과를 Kafka 로 발행했다.** 메시지 브로커를 거치지 않고 에이전트와
+서버가 직접 통신한다면 전송 계층을 어떻게 설계해야 하는지 확인해 보려고 만들었다.
 
-| 실무에서 얻은 기준 | 이 프로젝트의 선택 |
-|---|---|
-| 대량 데이터를 건건이 보내면 안 된다 | **client streaming** — 배치를 한 스트림에 흘려보냄 |
-| 수집 대상이 바뀔 때 에이전트를 건드리지 않아야 한다 | **server streaming** — 서버가 대상 변경을 푸시 |
-| 대상 하나가 실패해도 나머지는 흘러야 한다 | 배치 단위 검증 — **거절하되 스트림은 유지** |
+---
 
-> **범위 — 실제 수집은 하지 않는다.**
-> 클라우드·쿠버네티스 API 에 붙지 않고, 에이전트가 메트릭을 **합성해** 흘려보낸다.
-> 수집 대상 문자열(`aws/ec2`, `k8s/pod`)은 라우팅용 이름표다.
->
-> 실제 자격증명과 네트워크 변수가 섞이면 정작 검증하려던 **스트리밍 설계가 맞는지**
-> 판단이 흐려진다. 합성 데이터를 쓰면 "잘못된 배치 하나가 스트림을 끊는가" 같은
-> 질문을 결정적으로 테스트할 수 있다.
+## 바로 띄워 보기
+
+```bash
+make cluster      # kind 클러스터 + metrics-server + 샘플 워크로드
+make run-server   # gRPC :50051, 대시보드 http://localhost:8080
+make run-agent    # 20초 주기 수집 (다른 터미널)
+```
+
+`make run-server` 하나로 수집 서버와 대시보드가 같이 뜬다. 별도 웹 서버가 필요 없다.
+
+---
+
+## 무엇을 수집하는가
+
+| 종류 | 대상 | 방법 |
+|---|---|---|
+| **메타데이터** | Namespace · Deployment · ReplicaSet · Pod · CronJob · Job · ConfigMap · Secret · ServiceAccount | `client-go` |
+| **메트릭데이터** | 파드별 CPU(millicores) · 메모리(bytes) | `metrics-server` |
+| **로그데이터** | 파드 컨테이너 최근 로그 + 수준 추출 | `GetLogs` |
+
+Secret 은 **값을 수집하지 않는다.** 이름 · 타입 · 키 개수만 본다.
 
 ---
 
 ## 설계 의도
 
-### 왜 client streaming인가
+### 이름으로 적힌 참조를 UID 로 잇는다
 
-수집 결과를 건건이 전송하면 RPC 왕복 비용이 처리량을 지배한다.
-에이전트가 메트릭을 배치로 묶어 하나의 스트림에 연속 전송하고,
-서버는 스트림이 끝날 때 집계 결과를 한 번 돌려준다.
+이 프로젝트에서 가장 공들인 부분이다.
+
+쿠버네티스에서 자원 간 참조는 **UID 가 아니라 "이름" 으로 적힌다.**
+워크로드 스펙의 `envFrom.configMapRef.name` 에는 이름만 있고, 그 ConfigMap 의
+UID 는 스펙 어디에도 없다. 수집 시점에는 대상의 UID 를 알 수 없다.
+
+```go
+// 수집 단계 — 이름만 담아 보낸다
+&collectorv1.Relation{
+    Type:            RelDependency,
+    TargetKind:      "ConfigMap",
+    TargetName:      "shop-config",
+    TargetNamespace: "shop",
+    // TargetUid 는 비워 둔다
+}
+```
+
+그래서 **서버가 전체 자원을 받은 뒤** `namespace|kind|name` 역인덱스를 만들어 해석한다.
+참조 대상이 같은 배치에 없을 수 있으므로, 해석은 **스트림이 닫힌 다음**에 일어난다.
+
+참조가 들어올 수 있는 경로는 네 군데다. 하나라도 빠지면 관계가 조용히 누락된다.
+
+- `envFrom.configMapRef` / `envFrom.secretRef`
+- `env[].valueFrom.configMapKeyRef` / `secretKeyRef`
+- `volumes[].configMap` / `volumes[].secret`
+- `spec.serviceAccountName`
+
+### 소유 관계와 참조 관계를 구분한다
+
+| | 관계 | UID |
+|---|---|---|
+| **소유** `PARENT_CHILD` | Namespace → Pod, Deployment → ReplicaSet → Pod | `ownerReferences` 에 이미 있음 |
+| **참조** `DEPENDENCY` | Pod → ConfigMap · Secret · ServiceAccount | **이름만 있음 → 해석 필요** |
+
+ReplicaSet 과 Job 을 수집하지 않으면 소유 체인이 끊긴다.
+파드의 `ownerReferences` 는 Deployment 가 아니라 **ReplicaSet** 을 가리키기 때문이다.
+
+> 실제로 처음엔 ReplicaSet · Job 을 빼먹어 **6건이 미해석**으로 남았다.
+> 대시보드에 미해석 개수가 보였기 때문에 찾을 수 있었다.
+
+### 메타 · 메트릭 · 로그를 하나의 RPC 로 뭉개지 않는다
+
+성격이 다르다. 메타는 스펙과 관계, 메트릭은 수치, 로그는 텍스트다.
+검증 규칙도 달라야 한다.
+
+```protobuf
+rpc ReportMeta  (stream MetaBatch)   returns (ReportSummary);
+rpc ReportMetric(stream MetricBatch) returns (ReportSummary);
+rpc ReportLog   (stream LogBatch)    returns (ReportSummary);
+
+rpc Subscribe(SubscribeRequest) returns (stream CollectTarget);  // 대상 푸시
+rpc Health   (HealthRequest)    returns (HealthResponse);        // 기동 확인
+```
+
+### 부분 실패가 스트림 전체를 끊지 않는다
+
+수집기는 무인으로 돈다. 대상 하나가 잘못됐다고 전체 전송이 멈추면 안 된다.
+
+```go
+if reason := validateMeta(batch); reason != "" {
+    rejected += int64(len(batch.GetResources()))
+    c.log.Warn("meta batch rejected", "reason", reason, ...)
+    continue        // ← return 이 아니다. 스트림은 유지한다
+}
+```
+
+거절된 개수는 버려지지 않고 `ReportSummary.rejected` 에 담겨 에이전트로 돌아간다.
+**조용히 사라지는 데이터가 없어야** 무엇을 놓쳤는지 알 수 있다.
+
+같은 이유로 로그 수준을 못 뽑은 줄도 버리지 않고 `unknown` 으로 남긴다.
+버리면 어떤 형식을 놓쳤는지 영영 모른다.
+
+### 수집 주기는 서버가 쥔다
+
+에이전트를 재배포하지 않고 수집 빈도를 바꾸기 위해서다.
+에이전트는 자신이 수집 **가능한** 대상을 알리고, 서버가 **주기와 활성 여부**를 내려준다.
+
+구독 스트림은 서버가 푸시용으로 계속 열어 두므로 `io.EOF` 가 오지 않는다.
+**전송과 컨텍스트를 공유하면 둘이 함께 데드라인에 걸린다.**
+그래서 구독은 별도 고루틴으로 분리하고, 초기 목록만 `waitInitial(2s)` 로 기다린다.
+
+---
+
+## 검증
+
+```bash
+make test
+```
+
+| 패키지 | 커버리지 | 주요 테스트 |
+|---|---|---|
+| `internal/api` | 97.3% | 필터 · 정렬 · 집계 · 400 응답 |
+| `internal/server` | 68.6% | **거절 후에도 스트림 생존**, 뒤늦게 온 참조 해석, 주기 푸시 |
+| `internal/store` | 50.7% | 이름→UID 해석, **네임스페이스 격리**, 보존 한도 |
+| `internal/collector` | 48.3% | **참조 4경로 추출 · 중복 제거**, 시스템 네임스페이스 제외, 로그 수준 |
+
+- gRPC 는 **bufconn** 으로 메모리 위에 실제 서버를 띄워 테스트한다. 목이 아니라 진짜 스택을 통과한다.
+- 쿠버네티스는 **fake clientset** 을 쓴다. 클러스터 없이 수집 로직을 검증한다.
+- CI 는 거기서 멈추지 않고 **kind 클러스터를 실제로 띄워** 수집을 한 번 돌린다.
+  자원 20건 이상, 거절 0건, **미해석 관계 0건**을 통과 조건으로 건다.
+
+---
+
+## 실행 결과
 
 ```
-Report(stream MetricBatch) returns (ReportSummary)
+$ go run ./cmd/agent -once
+{"msg":"connected","server_version":"v0.2.0"}
+{"msg":"collect targets","targets":["meta/all","metric/pod","log/pod"]}
+{"msg":"meta sent",  "resources":34,"batches":1,"rejected":0,"elapsed_ms":1}
+{"msg":"metric sent","metrics":8,  "batches":1,"rejected":0,"elapsed_ms":0}
+{"msg":"log sent",   "entries":80, "batches":2,"rejected":0,"elapsed_ms":1}
+
+$ curl -s localhost:8080/api/summary | jq '.relations'
+{ "total": 60, "resolved": 60 }
 ```
-
-### 왜 수집 대상을 서버가 푸시하는가
-
-수집 범위가 바뀔 때마다 에이전트를 재배포하면 운영 비용이 크다.
-에이전트는 자신이 수집 **가능한** 대상만 알리고, 실제로 무엇을
-수집할지는 서버가 결정해 스트림으로 내려준다.
-
-```
-Subscribe(SubscribeRequest) returns (stream CollectTarget)
-```
-
-### 부분 실패가 스트림 전체를 죽이지 않는다
-
-검증에 실패한 배치는 버리고 로그를 남기되, 스트림은 계속 유지한다.
-수집기는 일부 대상이 실패해도 나머지가 계속 흘러야 하기 때문이다.
-버린 개수는 `ReportSummary.rejected`로 돌려주어 호출자가 인지할 수 있게 했다.
-
-### keepalive
-
-수집 에이전트는 유휴 구간이 길어질 수 있다. keepalive 없이 두면
-중간 장비가 연결을 끊어 재연결이 잦아지므로 서버에서 명시적으로 설정했다.
 
 ---
 
 ## 구조
 
 ```
-proto/collector.proto        서비스 정의 (unary / client stream / server stream)
-cmd/server                   수집 서버
-cmd/agent                    수집 에이전트 (클라이언트)
-internal/server              서비스 구현 + 배치 검증
+proto/collector.proto          서비스 정의
+cmd/server                     수집 서버 (gRPC + HTTP + 대시보드 서빙)
+cmd/agent                      수집 에이전트
+internal/collector             client-go 수집 — 메타 · 메트릭 · 로그
+internal/server                gRPC 서비스 구현 + 배치 검증
+internal/store                 메모리 저장소 + 이름→UID 해석
+internal/api                   조회 HTTP/JSON API
+web/                           Vue 3 대시보드 (Vite)
+deploy/sample-workloads.yaml   수집 대상 샘플
 ```
 
 ---
 
-## 실행
+## 범위와 한계
 
-### 사전 준비
-
-```bash
-# protoc 설치 (Windows: winget install protobuf / macOS: brew install protobuf)
-make tools          # protoc-gen-go, protoc-gen-go-grpc 설치
-make proto          # .proto → Go 코드 생성
-```
-
-### 로컬 실행
-
-```bash
-make run-server     # 터미널 1
-make run-agent      # 터미널 2
-```
-
-에이전트는 헬스체크 → 수집 대상 구독 → 배치 20개(각 100건) 전송 후
-집계 결과를 출력한다.
-
-```
-level=INFO msg="report summary" batches=20 metrics=2000 rejected=0 elapsed_ms=18
-```
-
-### 테스트
-
-```bash
-make test           # bufconn 기반. 실제 포트 없이 gRPC 스택을 태운다
-```
-
-```
-ok  internal/server   coverage: 88.6% of statements
-```
-
-- `TestHealth_RequiresAgentID` — 필수 인자 검증
-- `TestReport_CountsMetrics` — 배치 스트림 집계
-- `TestReport_RejectsInvalidButKeepsStream` — **부분 실패가 스트림을 죽이지 않는지**
-- `TestSubscribe_ReturnsCapabilitiesAsTargets` — 수집 대상 푸시
-- `TestValidate` — 배치 검증 6개 케이스
-
-### 컨테이너
-
-```bash
-make docker
-docker run --rm -p 50051:50051 grpc-metric-collector:local
-```
-
----
-
-## CI
-
-GitHub Actions에서 다음을 검증한다.
-
-| 단계 | 내용 |
-|---|---|
-| Lint | `gofmt` 위반 검사, `go vet` |
-| Test | `-race -cover` |
-| Build | Docker 이미지 빌드 후 기동 확인 |
-
----
-
-## 확인한 것
-
-- gRPC 세 가지 통신 패턴 (unary / client streaming / server streaming)
-- 스트림 수명주기와 `io.EOF` 처리, `CloseAndRecv` / `SendAndClose`
-- keepalive, `MaxRecvMsgSize` 등 장시간 스트림을 위한 서버 옵션
-- `GracefulStop`으로 진행 중인 스트림을 끊지 않는 종료
-- bufconn을 이용한 네트워크 없는 gRPC 통합 테스트
+- **저장소는 메모리다.** 실제 제품이라면 적재기가 Kafka 를 소비해
+  MariaDB · OpenSearch · Prometheus 로 라우팅한다. 여기서는 전송 계층과
+  수집 정확성을 보는 것이 목적이라 저장은 메모리로 한정했다.
+- **인증(mTLS)과 재시도 백오프는 없다.**
+- **부하 측정을 하지 않았다.** 처리량 수치를 제시할 수 없다.
+- 수집 주기가 겹칠 때의 중복 수집 방지(single-flight)는 넣지 않았다.
+- 메트릭은 metrics-server 에 의존한다. 설치되지 않은 클러스터에서는
+  메타와 로그만 수집하고 경고를 남긴 뒤 계속 진행한다.

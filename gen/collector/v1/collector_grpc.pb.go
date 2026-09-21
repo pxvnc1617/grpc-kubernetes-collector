@@ -19,9 +19,11 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	CollectorService_Report_FullMethodName    = "/collector.v1.CollectorService/Report"
-	CollectorService_Subscribe_FullMethodName = "/collector.v1.CollectorService/Subscribe"
-	CollectorService_Health_FullMethodName    = "/collector.v1.CollectorService/Health"
+	CollectorService_ReportMeta_FullMethodName   = "/collector.v1.CollectorService/ReportMeta"
+	CollectorService_ReportMetric_FullMethodName = "/collector.v1.CollectorService/ReportMetric"
+	CollectorService_ReportLog_FullMethodName    = "/collector.v1.CollectorService/ReportLog"
+	CollectorService_Subscribe_FullMethodName    = "/collector.v1.CollectorService/Subscribe"
+	CollectorService_Health_FullMethodName       = "/collector.v1.CollectorService/Health"
 )
 
 // CollectorServiceClient is the client API for CollectorService service.
@@ -35,10 +37,15 @@ const (
 //     (RPC 왕복 비용을 줄이고 처리량을 확보하기 위함)
 //   - 수집 대상은 서버가 결정해 푸시한다. 에이전트를 재배포하지 않고
 //     수집 범위를 바꾸기 위해서다.
+//   - 메타 · 메트릭 · 로그는 성격이 달라 RPC 를 나눴다.
+//     메타는 스펙과 참조 관계, 메트릭은 수치, 로그는 텍스트 줄이다.
 type CollectorServiceClient interface {
-	// Report 는 client streaming 이다.
-	// 에이전트가 메트릭 배치를 연속 전송하고, 서버는 스트림 종료 시 집계 결과를 반환한다.
-	Report(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[MetricBatch, ReportSummary], error)
+	// ReportMeta 는 자원 메타데이터 배치를 전송한다.
+	ReportMeta(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[MetaBatch, ReportSummary], error)
+	// ReportMetric 은 메트릭 배치를 전송한다.
+	ReportMetric(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[MetricBatch, ReportSummary], error)
+	// ReportLog 는 로그 배치를 전송한다.
+	ReportLog(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[LogBatch, ReportSummary], error)
 	// Subscribe 는 server streaming 이다.
 	// 에이전트가 구독하면 서버가 수집 대상 변경을 푸시한다.
 	Subscribe(ctx context.Context, in *SubscribeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[CollectTarget], error)
@@ -54,9 +61,22 @@ func NewCollectorServiceClient(cc grpc.ClientConnInterface) CollectorServiceClie
 	return &collectorServiceClient{cc}
 }
 
-func (c *collectorServiceClient) Report(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[MetricBatch, ReportSummary], error) {
+func (c *collectorServiceClient) ReportMeta(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[MetaBatch, ReportSummary], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &CollectorService_ServiceDesc.Streams[0], CollectorService_Report_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &CollectorService_ServiceDesc.Streams[0], CollectorService_ReportMeta_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[MetaBatch, ReportSummary]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type CollectorService_ReportMetaClient = grpc.ClientStreamingClient[MetaBatch, ReportSummary]
+
+func (c *collectorServiceClient) ReportMetric(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[MetricBatch, ReportSummary], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &CollectorService_ServiceDesc.Streams[1], CollectorService_ReportMetric_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -65,11 +85,24 @@ func (c *collectorServiceClient) Report(ctx context.Context, opts ...grpc.CallOp
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type CollectorService_ReportClient = grpc.ClientStreamingClient[MetricBatch, ReportSummary]
+type CollectorService_ReportMetricClient = grpc.ClientStreamingClient[MetricBatch, ReportSummary]
+
+func (c *collectorServiceClient) ReportLog(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[LogBatch, ReportSummary], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &CollectorService_ServiceDesc.Streams[2], CollectorService_ReportLog_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[LogBatch, ReportSummary]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type CollectorService_ReportLogClient = grpc.ClientStreamingClient[LogBatch, ReportSummary]
 
 func (c *collectorServiceClient) Subscribe(ctx context.Context, in *SubscribeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[CollectTarget], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &CollectorService_ServiceDesc.Streams[1], CollectorService_Subscribe_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &CollectorService_ServiceDesc.Streams[3], CollectorService_Subscribe_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -107,10 +140,15 @@ func (c *collectorServiceClient) Health(ctx context.Context, in *HealthRequest, 
 //     (RPC 왕복 비용을 줄이고 처리량을 확보하기 위함)
 //   - 수집 대상은 서버가 결정해 푸시한다. 에이전트를 재배포하지 않고
 //     수집 범위를 바꾸기 위해서다.
+//   - 메타 · 메트릭 · 로그는 성격이 달라 RPC 를 나눴다.
+//     메타는 스펙과 참조 관계, 메트릭은 수치, 로그는 텍스트 줄이다.
 type CollectorServiceServer interface {
-	// Report 는 client streaming 이다.
-	// 에이전트가 메트릭 배치를 연속 전송하고, 서버는 스트림 종료 시 집계 결과를 반환한다.
-	Report(grpc.ClientStreamingServer[MetricBatch, ReportSummary]) error
+	// ReportMeta 는 자원 메타데이터 배치를 전송한다.
+	ReportMeta(grpc.ClientStreamingServer[MetaBatch, ReportSummary]) error
+	// ReportMetric 은 메트릭 배치를 전송한다.
+	ReportMetric(grpc.ClientStreamingServer[MetricBatch, ReportSummary]) error
+	// ReportLog 는 로그 배치를 전송한다.
+	ReportLog(grpc.ClientStreamingServer[LogBatch, ReportSummary]) error
 	// Subscribe 는 server streaming 이다.
 	// 에이전트가 구독하면 서버가 수집 대상 변경을 푸시한다.
 	Subscribe(*SubscribeRequest, grpc.ServerStreamingServer[CollectTarget]) error
@@ -126,8 +164,14 @@ type CollectorServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedCollectorServiceServer struct{}
 
-func (UnimplementedCollectorServiceServer) Report(grpc.ClientStreamingServer[MetricBatch, ReportSummary]) error {
-	return status.Error(codes.Unimplemented, "method Report not implemented")
+func (UnimplementedCollectorServiceServer) ReportMeta(grpc.ClientStreamingServer[MetaBatch, ReportSummary]) error {
+	return status.Error(codes.Unimplemented, "method ReportMeta not implemented")
+}
+func (UnimplementedCollectorServiceServer) ReportMetric(grpc.ClientStreamingServer[MetricBatch, ReportSummary]) error {
+	return status.Error(codes.Unimplemented, "method ReportMetric not implemented")
+}
+func (UnimplementedCollectorServiceServer) ReportLog(grpc.ClientStreamingServer[LogBatch, ReportSummary]) error {
+	return status.Error(codes.Unimplemented, "method ReportLog not implemented")
 }
 func (UnimplementedCollectorServiceServer) Subscribe(*SubscribeRequest, grpc.ServerStreamingServer[CollectTarget]) error {
 	return status.Error(codes.Unimplemented, "method Subscribe not implemented")
@@ -156,12 +200,26 @@ func RegisterCollectorServiceServer(s grpc.ServiceRegistrar, srv CollectorServic
 	s.RegisterService(&CollectorService_ServiceDesc, srv)
 }
 
-func _CollectorService_Report_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(CollectorServiceServer).Report(&grpc.GenericServerStream[MetricBatch, ReportSummary]{ServerStream: stream})
+func _CollectorService_ReportMeta_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(CollectorServiceServer).ReportMeta(&grpc.GenericServerStream[MetaBatch, ReportSummary]{ServerStream: stream})
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type CollectorService_ReportServer = grpc.ClientStreamingServer[MetricBatch, ReportSummary]
+type CollectorService_ReportMetaServer = grpc.ClientStreamingServer[MetaBatch, ReportSummary]
+
+func _CollectorService_ReportMetric_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(CollectorServiceServer).ReportMetric(&grpc.GenericServerStream[MetricBatch, ReportSummary]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type CollectorService_ReportMetricServer = grpc.ClientStreamingServer[MetricBatch, ReportSummary]
+
+func _CollectorService_ReportLog_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(CollectorServiceServer).ReportLog(&grpc.GenericServerStream[LogBatch, ReportSummary]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type CollectorService_ReportLogServer = grpc.ClientStreamingServer[LogBatch, ReportSummary]
 
 func _CollectorService_Subscribe_Handler(srv interface{}, stream grpc.ServerStream) error {
 	m := new(SubscribeRequest)
@@ -206,8 +264,18 @@ var CollectorService_ServiceDesc = grpc.ServiceDesc{
 	},
 	Streams: []grpc.StreamDesc{
 		{
-			StreamName:    "Report",
-			Handler:       _CollectorService_Report_Handler,
+			StreamName:    "ReportMeta",
+			Handler:       _CollectorService_ReportMeta_Handler,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "ReportMetric",
+			Handler:       _CollectorService_ReportMetric_Handler,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "ReportLog",
+			Handler:       _CollectorService_ReportLog_Handler,
 			ClientStreams: true,
 		},
 		{
