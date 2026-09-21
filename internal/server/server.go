@@ -12,6 +12,7 @@ import (
 	"time"
 
 	collectorv1 "github.com/pxvnc1617/grpc-kubernetes-collector/gen/collector/v1"
+	"github.com/pxvnc1617/grpc-kubernetes-collector/internal/metrics"
 	"github.com/pxvnc1617/grpc-kubernetes-collector/internal/store"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -35,6 +36,7 @@ func New(log *slog.Logger, st *store.Store) *Collector {
 func (c *Collector) ReportMeta(stream collectorv1.CollectorService_ReportMetaServer) error {
 	start := time.Now()
 	var batches, items, rejected int64
+	agentID := ""
 
 	for {
 		batch, err := stream.Recv()
@@ -47,7 +49,9 @@ func (c *Collector) ReportMeta(stream collectorv1.CollectorService_ReportMetaSer
 		}
 
 		if reason := validateMeta(batch); reason != "" {
-			rejected += int64(len(batch.GetResources()))
+			n := int64(len(batch.GetResources()))
+			rejected += n
+			metrics.ItemsRejected.WithLabelValues("meta", reason).Add(float64(n))
 			c.log.Warn("meta batch rejected", "reason", reason, "agent_id", batch.GetAgentId())
 			continue // 스트림은 유지한다
 		}
@@ -58,6 +62,7 @@ func (c *Collector) ReportMeta(stream collectorv1.CollectorService_ReportMetaSer
 		}
 		c.store.UpsertResources(list)
 
+		agentID = batch.GetAgentId()
 		batches++
 		items += int64(len(batch.GetResources()))
 	}
@@ -68,6 +73,12 @@ func (c *Collector) ReportMeta(stream collectorv1.CollectorService_ReportMetaSer
 	c.store.RecordStream("meta", batches, items, rejected)
 
 	elapsed := time.Since(start)
+	c.publish("meta", agentID, batches, items, elapsed)
+	metrics.RelationsTotal.Set(float64(resolved + unresolved))
+	metrics.RelationsResolved.Set(float64(resolved))
+	for kind, n := range c.store.KindCount() {
+		metrics.ResourcesTracked.WithLabelValues(kind).Set(float64(n))
+	}
 	c.log.Info("meta stream closed",
 		"batches", batches, "resources", items, "rejected", rejected,
 		"relations_resolved", resolved, "relations_unresolved", unresolved,
@@ -81,6 +92,7 @@ func (c *Collector) ReportMeta(stream collectorv1.CollectorService_ReportMetaSer
 func (c *Collector) ReportMetric(stream collectorv1.CollectorService_ReportMetricServer) error {
 	start := time.Now()
 	var batches, items, rejected int64
+	agentID := ""
 
 	for {
 		batch, err := stream.Recv()
@@ -93,7 +105,9 @@ func (c *Collector) ReportMetric(stream collectorv1.CollectorService_ReportMetri
 		}
 
 		if reason := validateMetric(batch); reason != "" {
-			rejected += int64(len(batch.GetMetrics()))
+			n := int64(len(batch.GetMetrics()))
+			rejected += n
+			metrics.ItemsRejected.WithLabelValues("metric", reason).Add(float64(n))
 			c.log.Warn("metric batch rejected", "reason", reason, "agent_id", batch.GetAgentId())
 			continue
 		}
@@ -112,12 +126,14 @@ func (c *Collector) ReportMetric(stream collectorv1.CollectorService_ReportMetri
 		}
 		c.store.AppendMetrics(points)
 
+		agentID = batch.GetAgentId()
 		batches++
 		items += int64(len(batch.GetMetrics()))
 	}
 
 	c.store.RecordStream("metric", batches, items, rejected)
 	elapsed := time.Since(start)
+	c.publish("metric", agentID, batches, items, elapsed)
 	c.log.Info("metric stream closed",
 		"batches", batches, "metrics", items, "rejected", rejected,
 		"elapsed_ms", elapsed.Milliseconds())
@@ -130,6 +146,7 @@ func (c *Collector) ReportMetric(stream collectorv1.CollectorService_ReportMetri
 func (c *Collector) ReportLog(stream collectorv1.CollectorService_ReportLogServer) error {
 	start := time.Now()
 	var batches, items, rejected int64
+	agentID := ""
 
 	for {
 		batch, err := stream.Recv()
@@ -142,7 +159,9 @@ func (c *Collector) ReportLog(stream collectorv1.CollectorService_ReportLogServe
 		}
 
 		if reason := validateLog(batch); reason != "" {
-			rejected += int64(len(batch.GetEntries()))
+			n := int64(len(batch.GetEntries()))
+			rejected += n
+			metrics.ItemsRejected.WithLabelValues("log", reason).Add(float64(n))
 			c.log.Warn("log batch rejected", "reason", reason, "agent_id", batch.GetAgentId())
 			continue
 		}
@@ -161,12 +180,17 @@ func (c *Collector) ReportLog(stream collectorv1.CollectorService_ReportLogServe
 		}
 		c.store.AppendLogs(lines)
 
+		agentID = batch.GetAgentId()
 		batches++
 		items += int64(len(batch.GetEntries()))
 	}
 
 	c.store.RecordStream("log", batches, items, rejected)
 	elapsed := time.Since(start)
+	c.publish("log", agentID, batches, items, elapsed)
+	for level, n := range c.store.LevelCount() {
+		metrics.LogEntriesByLevel.WithLabelValues(level).Set(float64(n))
+	}
 	c.log.Info("log stream closed",
 		"batches", batches, "entries", items, "rejected", rejected,
 		"elapsed_ms", elapsed.Milliseconds())
@@ -228,6 +252,16 @@ func targetsFor(capabilities []string) []*collectorv1.CollectTarget {
 		})
 	}
 	return out
+}
+
+// publish 는 스트림 하나가 끝났을 때의 지표를 Prometheus 에 반영한다.
+func (c *Collector) publish(kind, agentID string, batches, items int64, elapsed time.Duration) {
+	metrics.BatchesReceived.WithLabelValues(kind).Add(float64(batches))
+	metrics.ItemsReceived.WithLabelValues(kind).Add(float64(items))
+	metrics.StreamDuration.WithLabelValues(kind).Observe(elapsed.Seconds())
+	if agentID != "" {
+		metrics.AgentLastSeen.WithLabelValues(agentID, kind).Set(float64(time.Now().Unix()))
+	}
 }
 
 // ══════════════ 검증 ════════════════════════════════════════

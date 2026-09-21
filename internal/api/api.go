@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/pxvnc1617/grpc-kubernetes-collector/internal/store"
 )
 
@@ -30,6 +31,8 @@ func (a *API) Routes() *http.ServeMux {
 	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, map[string]string{"status": "ok"})
 	})
+	// Prometheus 스크레이프 경로. /api 아래가 아니라 관례대로 /metrics 에 둔다.
+	mux.Handle("GET /metrics", promhttp.Handler())
 	return mux
 }
 

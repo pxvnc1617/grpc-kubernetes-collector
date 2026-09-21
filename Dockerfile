@@ -9,7 +9,7 @@ COPY web/ ./
 RUN npm run build
 
 # ── 2단계: Go 빌드 ───────────────────────────────────────────
-FROM golang:1.24-alpine AS build
+FROM golang:1.25-alpine AS build
 WORKDIR /src
 
 # 의존성 레이어를 분리해 소스만 바뀔 때 재다운로드를 피한다.

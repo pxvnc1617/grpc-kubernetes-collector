@@ -4,6 +4,14 @@ PROTO_DIR := proto
 MODULE    := github.com/pxvnc1617/grpc-kubernetes-collector
 CLUSTER   := grpc-k8s-collector
 
+# 이미지 태그를 커밋 해시로 고정한다.
+#
+# :dev 처럼 바뀌는 태그를 쓰면, 같은 태그로 다시 올렸을 때 노드의 containerd 가
+# 옛 이미지를 그대로 쓰는 일이 생긴다. "배포했는데 옛 코드가 돈다" 가 여기서 나온다.
+# 태그가 매번 달라지면 그런 모호함이 없다.
+IMAGE     := grpc-kubernetes-collector
+TAG       := $(shell git rev-parse --short HEAD)$(shell git diff --quiet || echo -dirty)
+
 ## tools: protoc 플러그인 설치 (protoc 자체는 별도 설치 필요)
 tools:
 	go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
@@ -56,16 +64,19 @@ run-server:
 run-agent:
 	go run ./cmd/agent
 
-## image: 이미지를 빌드해 kind 노드에 적재
+## image: 이미지를 빌드해 kind 노드에 적재 (태그 = 커밋 해시)
 image:
-	docker build -t grpc-kubernetes-collector:dev .
-	kind load docker-image grpc-kubernetes-collector:dev --name $(CLUSTER)
+	docker build -t $(IMAGE):$(TAG) .
+	kind load docker-image $(IMAGE):$(TAG) --name $(CLUSTER)
 
 ## deploy: 클러스터에 배포 (수집기가 자기 클러스터를 수집한다)
 deploy: image
 	kubectl apply -f deploy/k8s/
+	kubectl -n collector set image deployment/collector-server server=$(IMAGE):$(TAG)
+	kubectl -n collector set image deployment/collector-agent  agent=$(IMAGE):$(TAG)
 	kubectl -n collector rollout status deployment/collector-server --timeout=180s
 	kubectl -n collector rollout status deployment/collector-agent  --timeout=180s
+	@echo "배포된 태그: $(TAG)"
 	@echo
 	@echo "대시보드: http://localhost:30080  (extraPortMappings 로 만든 클러스터)"
 	@echo "그 외   : kubectl -n collector port-forward svc/collector-server 8080:8080"
