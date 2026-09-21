@@ -3,8 +3,10 @@ package collector
 import (
 	"context"
 	"sort"
+	"strings"
 	"testing"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -208,3 +210,78 @@ func ns(name string) *corev1.Namespace {
 }
 
 func metav1UID(s string) types.UID { return types.UID("ns-" + s) }
+
+// 파드의 부모를 수집 대상에 넣지 않으면 관계가 해석되지 않는다.
+//
+// Deployment 는 중간에 ReplicaSet 이 있어 그쪽만 챙기면 됐지만,
+// DaemonSet·StatefulSet 은 파드가 바로 가리킨다. 실제로 node-agent 를
+// DaemonSet 으로 올렸을 때 collector_relations_total/resolved 가
+// 108/107 로 벌어져서야 빠진 것을 알았다.
+//
+// 그래서 개별 종류를 확인하는 대신 불변식으로 검사한다.
+// "수집된 파드의 부모는 모두 수집된 자원 안에 있어야 한다."
+func TestCollectMeta_PodOwnersAreCollected(t *testing.T) {
+	podOf := func(name, owner, ownerKind string) *corev1.Pod {
+		return &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: name, Namespace: "shop", UID: types.UID(name + "-uid"),
+				OwnerReferences: []metav1.OwnerReference{
+					{Kind: ownerKind, Name: owner, UID: types.UID(owner + "-uid")},
+				},
+			},
+			Spec:   corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "busybox:1.36"}}},
+			Status: corev1.PodStatus{Phase: corev1.PodRunning},
+		}
+	}
+	tmpl := corev1.PodTemplateSpec{
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "busybox:1.36"}}},
+	}
+	one := int32(1)
+
+	cs := fake.NewSimpleClientset(
+		ns("shop"),
+		&appsv1.DaemonSet{
+			ObjectMeta: metav1.ObjectMeta{Name: "node-agent", Namespace: "shop", UID: "node-agent-uid"},
+			Spec:       appsv1.DaemonSetSpec{Template: tmpl},
+			Status:     appsv1.DaemonSetStatus{DesiredNumberScheduled: 1, NumberReady: 1},
+		},
+		podOf("node-agent-xk29f", "node-agent", "DaemonSet"),
+		&appsv1.StatefulSet{
+			ObjectMeta: metav1.ObjectMeta{Name: "ledger", Namespace: "shop", UID: "ledger-uid"},
+			Spec:       appsv1.StatefulSetSpec{Replicas: &one, Template: tmpl},
+			Status:     appsv1.StatefulSetStatus{ReadyReplicas: 1},
+		},
+		podOf("ledger-0", "ledger", "StatefulSet"),
+	)
+
+	got, err := CollectMeta(context.Background(), cs)
+	if err != nil {
+		t.Fatalf("CollectMeta: %v", err)
+	}
+
+	// 서버의 해석 색인과 같은 열쇠를 쓴다: namespace|kind|name
+	collected := make(map[string]bool, len(got))
+	for _, r := range got {
+		collected[r.GetNamespace()+"|"+r.GetKind()+"|"+r.GetName()] = true
+	}
+
+	var missing []string
+	for _, r := range got {
+		if r.GetKind() != "Pod" {
+			continue
+		}
+		for _, rel := range r.GetRelations() {
+			if rel.GetType() != RelParentChild || rel.GetTargetKind() == "Namespace" {
+				continue
+			}
+			key := rel.GetTargetNamespace() + "|" + rel.GetTargetKind() + "|" + rel.GetTargetName()
+			if !collected[key] {
+				missing = append(missing, r.GetName()+" -> "+key)
+			}
+		}
+	}
+	if len(missing) > 0 {
+		t.Errorf("파드의 부모가 수집되지 않음 (관계가 미해석으로 남는다):\n  %s",
+			strings.Join(missing, "\n  "))
+	}
+}

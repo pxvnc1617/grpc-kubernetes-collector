@@ -36,7 +36,7 @@ rules:
 
   # 워크로드
   - apiGroups: ["apps"]
-    resources: ["deployments", "replicasets"]
+    resources: ["deployments", "replicasets", "daemonsets", "statefulsets"]
     verbs: ["get", "list"]
 
   - apiGroups: ["batch"]

@@ -20,6 +20,12 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: collector-server
+      # Prometheus 가 이름이 아니라 애너테이션으로 대상을 찾는다.
+      # port 를 명시하지 않으면 첫 번째 포트(gRPC)로 긁으러 간다.
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
     spec:
       securityContext:
         runAsNonRoot: true

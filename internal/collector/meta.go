@@ -150,6 +150,67 @@ func CollectMeta(ctx context.Context, cs kubernetes.Interface) ([]*collectorv1.R
 			})
 		}
 
+		// DaemonSet · StatefulSet 도 파드를 소유한다.
+		//
+		// Deployment 와 달리 중간에 ReplicaSet 이 없어 파드가 이들을 바로
+		// 가리킨다. 빼면 그 파드의 부모가 해석되지 않는다.
+		// 실제로 이 수집기의 node-agent 를 DaemonSet 으로 올렸을 때
+		// collector_relations_total 과 resolved 가 108/107 로 벌어져 드러났다.
+		dss, err := cs.AppsV1().DaemonSets(ns).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			return nil, fmt.Errorf("list daemonsets in %s: %w", ns, err)
+		}
+		for i := range dss.Items {
+			ds := &dss.Items[i]
+			rels := []*collectorv1.Relation{nsParent(ds.Namespace)}
+			rels = append(rels, podSpecRefs(ds.Namespace, &ds.Spec.Template.Spec)...)
+			out = append(out, &collectorv1.ResourceMeta{
+				Uid:       string(ds.UID),
+				Kind:      "DaemonSet",
+				Name:      ds.Name,
+				Namespace: ds.Namespace,
+				Labels:    ds.Labels,
+				Status:    replicaStatus(ds.Status.NumberReady, ds.Status.DesiredNumberScheduled),
+				CreatedAt: timestamppb.New(ds.CreationTimestamp.Time),
+				Attributes: map[string]string{
+					// DaemonSet 은 replicas 가 없다. 노드 수가 곧 기대치다.
+					"desired": strconv.Itoa(int(ds.Status.DesiredNumberScheduled)),
+					"ready":   strconv.Itoa(int(ds.Status.NumberReady)),
+					"image":   firstImage(&ds.Spec.Template.Spec),
+				},
+				Relations: rels,
+			})
+		}
+
+		sts, err := cs.AppsV1().StatefulSets(ns).List(ctx, metav1.ListOptions{})
+		if err != nil {
+			return nil, fmt.Errorf("list statefulsets in %s: %w", ns, err)
+		}
+		for i := range sts.Items {
+			st := &sts.Items[i]
+			rels := []*collectorv1.Relation{nsParent(st.Namespace)}
+			rels = append(rels, podSpecRefs(st.Namespace, &st.Spec.Template.Spec)...)
+			desired := int32(0)
+			if st.Spec.Replicas != nil {
+				desired = *st.Spec.Replicas
+			}
+			out = append(out, &collectorv1.ResourceMeta{
+				Uid:       string(st.UID),
+				Kind:      "StatefulSet",
+				Name:      st.Name,
+				Namespace: st.Namespace,
+				Labels:    st.Labels,
+				Status:    replicaStatus(st.Status.ReadyReplicas, desired),
+				CreatedAt: timestamppb.New(st.CreationTimestamp.Time),
+				Attributes: map[string]string{
+					"replicas": strconv.Itoa(int(desired)),
+					"ready":    strconv.Itoa(int(st.Status.ReadyReplicas)),
+					"image":    firstImage(&st.Spec.Template.Spec),
+				},
+				Relations: rels,
+			})
+		}
+
 		// ReplicaSet · Job 을 수집해야 소유 체인이 끊기지 않는다.
 		// 파드의 ownerReferences 는 Deployment 가 아니라 ReplicaSet 을 가리키고,
 		// CronJob 이 만든 파드는 Job 을 가리킨다. 중간 단계를 빼면

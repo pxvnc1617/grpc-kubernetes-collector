@@ -1,0 +1,197 @@
+# Prometheus — 수집기 자신의 지표를 긁어간다.
+#
+# /metrics 를 내는 것만으로는 "노출했다" 일 뿐이다. 실제로 긁히는지,
+# 긁힌 값으로 경보가 뜨는지까지 봐야 관측 가능하다고 말할 수 있다.
+#
+# 여기서는 그 한 바퀴를 확인하는 것이 목적이라 단일 파드 · 메모리 보존으로 둔다.
+# 운영이라면 kube-prometheus-stack(Operator) 을 쓰고 원격 저장소를 붙인다.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  namespace: collector
+---
+# 파드 자동 발견(kubernetes_sd_configs)을 위해 읽기 권한이 필요하다.
+# 스크랩 대상만 찾으면 되므로 목록 조회만 준다.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "services", "endpoints", "nodes"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: prometheus
+subjects:
+  - kind: ServiceAccount
+    name: prometheus
+    namespace: collector
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: collector
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+
+    rule_files:
+      - /etc/prometheus/rules.yml
+
+    scrape_configs:
+      # 대상을 이름으로 박지 않고 애너테이션으로 찾는다.
+      # 파드가 늘거나 이름이 바뀌어도 설정을 고칠 일이 없다.
+      - job_name: kubernetes-pods
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: "true"
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          # 애너테이션의 포트로 주소를 갈아끼운다. 안 그러면
+          # 파드의 첫 번째 포트(여기서는 gRPC)로 긁으러 간다.
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            target_label: __address__
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+
+  rules.yml: |
+    groups:
+      - name: collector
+        rules:
+          # 거절은 에이전트와 서버의 기대가 어긋났다는 뜻이다.
+          # 스트림은 계속 살아 있으므로 지표로 내지 않으면 조용히 묻힌다.
+          - alert: CollectorItemsRejected
+            expr: increase(collector_items_rejected_total[5m]) > 0
+            for: 1m
+            labels:
+              severity: warning
+            annotations:
+              summary: "{{ $labels.kind }} 배치가 거절되고 있다 (사유: {{ $labels.reason }})"
+
+          # 두 값이 벌어지면 수집 대상에서 빠진 자원 종류가 있다는 신호다.
+          # 실제로 ReplicaSet 을 빼먹었을 때 이 차이로 알아챘다.
+          - alert: CollectorRelationsUnresolved
+            expr: collector_relations_total - collector_relations_resolved > 0
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "해석되지 않은 관계가 남아 있다 — 수집 누락 의심"
+
+          # 에이전트가 죽어도 서버는 멀쩡히 떠 있다.
+          # 마지막 전송 시각을 봐야 "수집이 멈춘 것" 을 알 수 있다.
+          - alert: CollectorAgentSilent
+            expr: time() - collector_agent_last_seen_seconds > 120
+            for: 1m
+            labels:
+              severity: critical
+            annotations:
+              summary: "{{ $labels.agent_id }} 가 2분 넘게 {{ $labels.kind }} 를 보내지 않았다"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: collector
+  labels:
+    app.kubernetes.io/name: prometheus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: prometheus
+    spec:
+      serviceAccountName: prometheus
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534          # nobody — 공식 이미지의 기본 사용자
+        fsGroup: 65534
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v2.53.0
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            # 보존을 짧게 둔다. 확인용이라 오래 쌓을 이유가 없다.
+            - --storage.tsdb.retention.time=2h
+            - --web.enable-lifecycle
+          ports:
+            - name: http
+              containerPort: 9090
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+            - name: data
+              mountPath: /prometheus
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: config
+          configMap:
+            name: prometheus-config
+        # emptyDir 이라 파드가 죽으면 지표도 사라진다.
+        # 보존이 필요하면 PVC 로 바꾼다.
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: collector
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: prometheus
+  ports:
+    - name: http
+      port: 9090
+      targetPort: http
+      nodePort: 30090
