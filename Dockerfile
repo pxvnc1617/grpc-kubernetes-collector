@@ -19,11 +19,13 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/agent  ./cmd/agent
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/node-agent ./cmd/node-agent
 
 # ── 3단계: 실행 이미지 ───────────────────────────────────────
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/server /server
 COPY --from=build /out/agent  /agent
+COPY --from=build /out/node-agent /node-agent
 COPY --from=web   /web/dist   /web/dist
 USER nonroot:nonroot
 EXPOSE 50051 8080

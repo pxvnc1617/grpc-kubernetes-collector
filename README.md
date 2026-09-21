@@ -83,13 +83,56 @@ collector 네임스페이스
 `get` 권한이 곧 값 접근이다. 그래서 수집 코드에서 `Data` 를 담지 않는 것으로
 경계를 지키고, 매니페스트 주석에 그 이유를 남겼다.
 
-### DaemonSet 이 아니라 Deployment 다
+### 수집 경로가 다르면 배포 형태도 다르다
 
-이 에이전트는 **API 서버를 통해 클러스터 전체를 읽는다.**
-노드마다 띄우면 같은 자원을 노드 수만큼 중복 수집한다.
+같은 "파드 CPU·메모리" 라도 어디서 재느냐에 따라 값도, 떠야 할 모양도 다르다.
 
-노드의 `/sys/fs/cgroup` 을 직접 읽는 수집기라면 그때는 DaemonSet 이 맞다.
-수집 경로가 다르면 배포 형태도 달라야 한다.
+| | `agent` | `node-agent` |
+|---|---|---|
+| 배포 | **Deployment 1개** | **DaemonSet N개** |
+| 경로 | API 서버 경유 | 노드 `/sys/fs/cgroup` 직접 |
+| 범위 | 클러스터 전체 | 그 노드의 컨테이너만 |
+| 값 | metrics-server 가 집계한 값 | 커널 카운터 원본 |
+| 권한 | ClusterRole (읽기) | ClusterRole + **hostPath** |
+
+`agent` 를 DaemonSet 으로 띄우면 같은 자원을 노드 수만큼 중복 수집한다.
+반대로 `node-agent` 를 Deployment 로 띄우면 한 노드만 보게 된다.
+
+실제로 두 경로의 수집량이 다르게 나온다.
+
+```
+cpu_usage_millicores                7건    수집 대상 네임스페이스만
+cgroup_cpu_usage_nanoseconds_total 13건    노드의 모든 컨테이너 (kube-system 포함)
+```
+
+### cgroup 에서 파드를 알아내는 법
+
+cgroup 은 파드 UID 만 준다. 이름과 네임스페이스는 API 서버에서 받아 이어야 한다.
+그런데 **경로에 박힌 UID 는 그대로 쓸 수 없다.**
+
+```
+/sys/fs/cgroup/memory/kubelet.slice/kubelet-kubepods.slice/
+  kubelet-kubepods-besteffort.slice/
+    kubelet-kubepods-besteffort-pod6d93af47_0ee3_4b96_bb9a_8952ed07be29.slice/
+                                └──────── 하이픈이 밑줄로 바뀌어 있다 ────────┘
+      cri-containerd-91f8a99d....scope/
+        memory.usage_in_bytes
+```
+
+systemd 는 슬라이스 이름에 하이픈을 못 쓰므로 밑줄로 바꿔 넣는다.
+되돌리지 않으면 쿠버네티스가 아는 UID 와 이어지지 않고, **메트릭은 수집되는데
+어느 파드 것인지 알 수 없게 된다.**
+
+처음 구현에서는 `"pod"` 를 찾아 잘랐는데, `kubelet-kube`**pod**`s.slice` 의
+`pod` 에도 걸려 QoS 슬라이스를 파드로 오인했다. 테스트가 잡아 줬다.
+
+```
+podUIDFromSlice("kubelet-kubepods.slice")
+     got  "s"        ← UID 로 "s" 가 들어갔다
+     want ""
+```
+
+`-pod` 경계와 UID 형식(8-4-4-4-12 16진수)을 함께 검사하도록 고쳤다.
 
 ### replicas 는 1 이다
 
@@ -233,10 +276,10 @@ make test
 
 | 패키지 | 커버리지 | 주요 테스트 |
 |---|---|---|
-| `internal/api` | 97.3% | 필터 · 정렬 · 집계 · 400 응답 |
-| `internal/server` | 68.6% | **거절 후에도 스트림 생존**, 뒤늦게 온 참조 해석, 주기 푸시 |
+| `internal/api` | 97.4% | 필터 · 정렬 · 집계 · 400 응답 |
+| `internal/server` | 69.3% | **거절 후에도 스트림 생존**, 뒤늦게 온 참조 해석, 주기 푸시 |
 | `internal/store` | 50.7% | 이름→UID 해석, **네임스페이스 격리**, 보존 한도 |
-| `internal/collector` | 48.3% | **참조 4경로 추출 · 중복 제거**, 시스템 네임스페이스 제외, 로그 수준 |
+| `internal/collector` | 61.0% | **참조 4경로 추출 · 중복 제거**, **cgroup 경로 파싱**, 시스템 네임스페이스 제외, 로그 수준 |
 
 - gRPC 는 **bufconn** 으로 메모리 위에 실제 서버를 띄워 테스트한다. 목이 아니라 진짜 스택을 통과한다.
 - 쿠버네티스는 **fake clientset** 을 쓴다. 클러스터 없이 수집 로직을 검증한다.

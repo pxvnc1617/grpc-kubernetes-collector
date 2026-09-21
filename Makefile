@@ -44,6 +44,7 @@ web:
 build: web
 	go build -o bin/server ./cmd/server
 	go build -o bin/agent  ./cmd/agent
+	go build -o bin/node-agent ./cmd/node-agent
 
 ## test: 전체 테스트 + 커버리지
 test:
@@ -74,8 +75,10 @@ deploy: image
 	kubectl apply -f deploy/k8s/
 	kubectl -n collector set image deployment/collector-server server=$(IMAGE):$(TAG)
 	kubectl -n collector set image deployment/collector-agent  agent=$(IMAGE):$(TAG)
+	kubectl -n collector set image daemonset/collector-node-agent node-agent=$(IMAGE):$(TAG)
 	kubectl -n collector rollout status deployment/collector-server --timeout=180s
 	kubectl -n collector rollout status deployment/collector-agent  --timeout=180s
+	kubectl -n collector rollout status daemonset/collector-node-agent --timeout=180s
 	@echo "배포된 태그: $(TAG)"
 	@echo
 	@echo "대시보드: http://localhost:30080  (extraPortMappings 로 만든 클러스터)"
