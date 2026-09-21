@@ -51,16 +51,24 @@ make deploy     # 이미지 빌드 → kind 적재 → 배포
 
 ```
 collector 네임스페이스
-├ ServiceAccount + ClusterRole + ClusterRoleBinding
+├ ServiceAccount + ClusterRole + ClusterRoleBinding   (agent · node-agent · prometheus 각각)
 ├ ConfigMap            클러스터 식별자
-├ Deployment  server   gRPC :50051 · HTTP :8080
-├ Deployment  agent    in-cluster 인증 (ServiceAccount 토큰)
+├ Deployment  server       gRPC :50051 · HTTP :8080
+├ Deployment  agent        in-cluster 인증 (ServiceAccount 토큰)
+├ DaemonSet   node-agent   노드 cgroup 직접 수집
+├ Deployment  prometheus   수집기 지표 스크랩 + 경보
 ├ Service     ClusterIP
-└ Service     NodePort 30080   대시보드
+├ Service     NodePort 30080   대시보드
+└ Service     NodePort 30090   Prometheus
 ```
 
-대시보드는 `http://localhost:30080`, 포트 매핑 없이 만든 클러스터라면
-`kubectl -n collector port-forward svc/collector-server 8080:8080`.
+대시보드는 `http://localhost:30080`, Prometheus 는 `http://localhost:30090`.
+포트 매핑 없이 만든 클러스터라면 `kubectl -n collector port-forward` 를 쓴다.
+
+```bash
+kubectl -n collector port-forward svc/collector-server 8080:8080
+kubectl -n collector port-forward svc/prometheus       9090:9090
+```
 
 ---
 
@@ -165,6 +173,64 @@ CrashLoopBackOff 로 빠져 복구가 지수적으로 늦어진다.**
 {"level":"WARN","msg":"server not ready, retrying","attempt":1,"retry_in":"1s"}
 {"level":"WARN","msg":"server not ready, retrying","attempt":5,"retry_in":"16s"}
 {"level":"INFO","msg":"connected","server_version":"v0.2.0","attempts":8}
+```
+
+### 지표를 내는 데서 멈추지 않았다
+
+`/metrics` 를 여는 것만으로는 "노출했다" 일 뿐이다.
+실제로 긁히는지, 긁힌 값으로 경보가 뜨는지까지 봐야 관측 가능하다고 말할 수 있다.
+그래서 Prometheus 를 클러스터에 같이 올렸다.
+
+대상은 이름으로 박지 않고 애너테이션으로 찾게 했다.
+파드가 늘거나 이름이 바뀌어도 설정을 고칠 일이 없다.
+
+```yaml
+annotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8080"     # 없으면 파드의 첫 포트(gRPC)로 긁으러 간다
+  prometheus.io/path: "/metrics"
+```
+
+경보는 셋이다. 모두 **"조용히 잘못되는 것"** 을 겨냥했다.
+
+| 경보 | 무엇을 잡는가 |
+|---|---|
+| `CollectorItemsRejected` | 에이전트와 서버의 기대가 어긋났다 — 스트림은 살아 있어 안 보인다 |
+| `CollectorRelationsUnresolved` | 수집 대상에서 빠진 자원 종류가 있다 |
+| `CollectorAgentSilent` | 에이전트가 죽어도 서버는 멀쩡히 떠 있다 |
+
+### 그 경보가 바로 내 버그를 잡았다
+
+Prometheus 를 올리자마자 `CollectorRelationsUnresolved` 가 떴다.
+
+```
+collector_relations_total     108
+collector_relations_resolved  107
+```
+
+남은 하나를 찾아보니 이것이었다.
+
+```
+Pod collector/collector-node-agent-bvscw
+  --PARENT_CHILD--> DaemonSet collector/collector-node-agent
+```
+
+바로 앞 단계에서 `node-agent` 를 DaemonSet 으로 올려놓고,
+**정작 DaemonSet 을 수집 대상에 넣지 않았다.**
+Deployment 는 중간에 ReplicaSet 이 있어 그쪽만 챙기면 됐지만,
+DaemonSet·StatefulSet 은 파드가 바로 가리킨다.
+
+대시보드만 봤으면 몰랐다. 관계가 하나 적게 보일 뿐 아무것도 안 깨진다.
+
+DaemonSet·StatefulSet 수집을 추가하고 RBAC 도 함께 열었다.
+고친 뒤 **117/117 · 경보 전부 해제**를 확인했다.
+
+테스트는 종류를 나열하는 대신 불변식으로 뒀다.
+
+```go
+// "수집된 파드의 부모는 모두 수집된 자원 안에 있어야 한다"
+// 종류가 늘어도 테스트를 고칠 필요가 없고, 이번 같은 누락은 바로 걸린다.
+func TestCollectMeta_PodOwnersAreCollected(t *testing.T)
 ```
 
 ---
@@ -279,7 +345,7 @@ make test
 | `internal/api` | 97.4% | 필터 · 정렬 · 집계 · 400 응답 |
 | `internal/server` | 69.3% | **거절 후에도 스트림 생존**, 뒤늦게 온 참조 해석, 주기 푸시 |
 | `internal/store` | 50.7% | 이름→UID 해석, **네임스페이스 격리**, 보존 한도 |
-| `internal/collector` | 61.0% | **참조 4경로 추출 · 중복 제거**, **cgroup 경로 파싱**, 시스템 네임스페이스 제외, 로그 수준 |
+| `internal/collector` | 63.1% | **참조 4경로 추출 · 중복 제거**, **cgroup 경로 파싱**, 시스템 네임스페이스 제외, 로그 수준 |
 
 - gRPC 는 **bufconn** 으로 메모리 위에 실제 서버를 띄워 테스트한다. 목이 아니라 진짜 스택을 통과한다.
 - 쿠버네티스는 **fake clientset** 을 쓴다. 클러스터 없이 수집 로직을 검증한다.
